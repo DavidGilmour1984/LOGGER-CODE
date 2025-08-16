@@ -1,0 +1,223 @@
+#include <HX711.h>
+#include <WiFi.h>
+#include <ESPAsyncWebServer.h>
+#include <Preferences.h>  // Include the Preferences library
+
+// Pin definitions for HX711
+const int LOADCELL_DOUT_PIN = 21;
+const int LOADCELL_SCK_PIN = 19;
+
+// Pin 18 for the switch
+const int PIN_18 = 18;  // Pin to toggle high or low
+
+// Default calibration factor
+float calibration_factor = 88.5;  // Default calibration factor
+
+// Invert control variable
+bool isInverted = false;
+
+HX711 scale;
+
+// Access point credentials
+const char* ssid = "ForceLogger";
+const char* password = "";
+
+// Create AsyncWebServer object on port 80
+AsyncWebServer server(80);
+
+// Global force variable
+volatile float force = 0;
+
+// Frequency control
+int samplingInterval = 12;  // Default to 80Hz (12ms interval)
+const int rate_20Hz = 50;    // 20Hz rate (50ms interval)
+const int rate_80Hz = 12;    // 80Hz rate (12.5ms interval)
+
+// Create Preferences object to access NVS
+Preferences preferences;
+
+void readForce() {
+if (scale.is_ready()) {
+long reading = scale.get_units(1);
+force = reading * (9.81 / 1000.0);  // Convert grams to Newtons
+
+// Apply inversion if necessary
+if (isInverted) {
+force = -force;
+}
+
+Serial.printf("%lu,%.2f\n", millis(), force); // Print time in ms and force as CSV
+}
+}
+
+String htmlPage() {
+String html = "<!DOCTYPE html><html lang='en'><head>";
+html += "<meta charset='UTF-8'><meta name='viewport' content='width=device-width, initial-scale=1.0'>";
+html += "<style>body {font-family: Helvetica; text-align: center;}";
+html += "h1 {font-size: 60px;}";
+html += "button {font-size: 40px; width: 300px; height: 80px; margin: 10px;}";
+html += ".switch-container { display: flex; align-items: center; justify-content: center; margin-top: 20px; }";
+html += "#rateLabel { font-size: 40px; margin: 0 20px; }";
+html += "label.switch { position: relative; display: inline-block; width: 120px; height: 68px; }";
+html += "label.switch input { opacity: 0; width: 0; height: 0; }";
+html += "span.slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #ccc; transition: .4s; border-radius: 34px; }";
+html += "span.slider:before { position: absolute; content: ''; height: 52px; width: 52px; left: 8px; bottom: 8px; background-color: white; transition: .4s; border-radius: 50%; }";
+html += "input:checked + .slider { background-color: #2196F3; }";
+html += "input:checked + .slider:before { transform: translateX(52px); }";
+html += "</style>";
+html += "<script>";
+html += "function updateForce() {";
+html += "  fetch('/force').then(response => response.text()).then(data => {";
+html += "    document.getElementById('forceValue').innerHTML = data + ' N';";
+html += "  });";
+html += "}";
+
+html += "function tare() {";
+html += "  fetch('/tare').then(updateForce);";
+html += "}";
+
+html += "function togglePin18() {";
+html += "  var switchElement = document.getElementById('rateSwitch');";
+html += "  fetch('/switch?state=' + (switchElement.checked ? 'ON' : 'OFF'));";
+html += "}";
+
+html += "function toggleRate() {";
+html += "  var switchElement = document.getElementById('rateSwitch');";
+html += "  fetch('/rate?freq=' + (switchElement.checked ? '80' : '20'));";
+html += "}";
+
+html += "function updateCalibration() {";
+html += "  var newCalibration = document.getElementById('calibrationInput').value;";
+html += "  fetch('/updateCalibration?factor=' + newCalibration).then(response => response.text()).then(data => {";
+html += "    document.getElementById('calibrationValue').innerHTML = data;";
+html += "  });";
+html += "}";
+
+html += "function toggleInvert() {";
+html += "  fetch('/invert').then(response => response.text()).then(data => {";
+html += "    document.getElementById('invertStatus').innerHTML = data;";
+html += "  });";
+html += "}";
+
+html += "setInterval(updateForce, " + String(samplingInterval) + ");";
+html += "</script></head><body>";
+html += "<h1 id='forceValue'>" + String(force, 2) + " N</h1>";
+html += "<button onclick='tare()'>Tare</button>";
+html += "<button onclick='toggleInvert()' style='font-size: 40px;'>Invert</button>";
+
+html += "<div class='switch-container'><span id='rateLabel'>20Hz</span>";
+html += "<label class='switch'><input type='checkbox' id='rateSwitch' onchange='toggleRate()'><span class='slider'></span></label>";
+html += "<span id='rateLabel'>80Hz</span></div>";
+
+html += "<div>";
+html += "<input type='text' id='calibrationInput' value='" + String(calibration_factor) + "' style='font-size: 40px;'>";
+html += "<button onclick='updateCalibration()' style='font-size: 40px;'>Calibrate</button>";
+html += "</div>";
+html += "<p>Current Calibration Factor: <span id='calibrationValue'>" + String(calibration_factor) + "</span></p>";
+html += "</body></html>";
+return html;
+}
+
+// Endpoint to get the current force value
+void sendForce(AsyncWebServerRequest *request) {
+request->send(200, "text/plain", String(force, 2));
+}
+
+// Tare function
+void tareScale() {
+scale.tare();  // Reset the scale to zero
+}
+
+// Function to toggle pin 18 high or low
+void togglePin18(String state) {
+digitalWrite(PIN_18, (state == "ON") ? HIGH : LOW);
+}
+
+// Set sampling rate based on the switch state
+void setSamplingRate(String freq) {
+if (freq == "80") {
+samplingInterval = rate_80Hz;
+digitalWrite(PIN_18, HIGH);  // Set pin 18 to HIGH when 80Hz
+} else {
+samplingInterval = rate_20Hz;
+digitalWrite(PIN_18, LOW);   // Set pin 18 to LOW when 20Hz
+}
+}
+
+// Endpoint to update the calibration factor
+void updateCalibration(AsyncWebServerRequest *request) {
+if (request->hasParam("factor")) {
+calibration_factor = request->getParam("factor")->value().toFloat();
+scale.set_scale(calibration_factor);  // Apply the new calibration factor
+preferences.putFloat("calibration_factor", calibration_factor);  // Save to NVS
+request->send(200, "text/plain", String(calibration_factor));
+}
+}
+
+// Endpoint to toggle inversion
+void invertForce(AsyncWebServerRequest *request) {
+isInverted = !isInverted;  // Toggle inversion
+preferences.putBool("isInverted", isInverted);  // Save inversion state to NVS
+request->send(200, "text/plain", "Inversion " + String(isInverted ? "Enabled" : "Disabled"));
+}
+
+void setup() {
+Serial.begin(115200);
+
+// Initialize Preferences
+preferences.begin("settings", false);
+
+// Read calibration factor and inversion state from NVS
+calibration_factor = preferences.getFloat("calibration_factor", 278);
+isInverted = preferences.getBool("isInverted", false);
+
+// Initialize the load cell
+scale.begin(LOADCELL_DOUT_PIN, LOADCELL_SCK_PIN);
+scale.set_scale(calibration_factor);
+scale.tare();
+
+delay(1000);
+
+pinMode(PIN_18, OUTPUT);
+digitalWrite(PIN_18, LOW);  // Initially set pin 18 to LOW
+
+WiFi.softAP(ssid, password);
+
+Serial.println();
+Serial.print("Access Point IP: ");
+Serial.println(WiFi.softAPIP());
+
+server.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
+request->send(200, "text/html", htmlPage());
+});
+
+server.on("/force", HTTP_GET, sendForce);
+
+server.on("/tare", HTTP_GET, [](AsyncWebServerRequest *request){
+tareScale();
+request->send(200, "text/plain", "Scale tared");
+});
+
+server.on("/switch", HTTP_GET, [](AsyncWebServerRequest *request){
+String state = request->getParam("state")->value();
+togglePin18(state);
+request->send(200, "text/plain", "Pin 18 toggled to " + state);
+});
+
+server.on("/rate", HTTP_GET, [](AsyncWebServerRequest *request){
+String freq = request->getParam("freq")->value();
+setSamplingRate(freq);
+request->send(200, "text/plain", "Sampling rate set to " + freq + "Hz");
+});
+
+server.on("/updateCalibration", HTTP_GET, updateCalibration);
+
+// Endpoint to toggle the inversion
+server.on("/invert", HTTP_GET, invertForce);
+
+server.begin();
+}
+
+void loop() {
+readForce();
+}
