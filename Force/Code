@@ -36,6 +36,9 @@ const int rate_80Hz = 12;    // 80Hz rate (12.5ms interval)
 // Create Preferences object to access NVS
 Preferences preferences;
 
+// Counter for serial prints
+int serialPrintCount = 0;
+
 void readForce() {
 if (scale.is_ready()) {
 long reading = scale.get_units(1);
@@ -46,7 +49,14 @@ if (isInverted) {
 force = -force;
 }
 
-Serial.printf("%lu,%.2f\n", millis(), force); // Print time in ms and force as CSV
+// Only print "A" for the first 10 prints, then print only the time and force values as CSV
+String thirdCSV = (serialPrintCount < 10) ? "A," : "";
+
+// Print time in ms, force as CSV
+Serial.printf("%lu,%s%.2f\n", millis(), thirdCSV.c_str(), force);
+
+// Increment the counter
+serialPrintCount++;
 }
 }
 
@@ -154,7 +164,7 @@ request->send(200, "text/plain", String(calibration_factor));
 }
 }
 
-// Endpoint to toggle inversion
+// Endpoint to toggle the inversion
 void invertForce(AsyncWebServerRequest *request) {
 isInverted = !isInverted;  // Toggle inversion
 preferences.putBool("isInverted", isInverted);  // Save inversion state to NVS
