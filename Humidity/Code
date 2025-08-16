@@ -1,0 +1,68 @@
+#include <Wire.h>
+#include <Adafruit_AHTX0.h>
+
+#define SDA_PIN 21  // ESP32 default I2C SDA
+#define SCL_PIN 22  // ESP32 default I2C SCL
+
+Adafruit_AHTX0 aht;
+
+unsigned long startTime = 0;
+unsigned long lastReadTime = 0;
+float interval = 2.0; // Default interval in seconds
+bool printTime = false;  // Flag to control whether to print time or 0
+
+void setup() {
+Serial.begin(115200);
+Wire.begin(SDA_PIN, SCL_PIN);
+
+if (!aht.begin()) {
+Serial.println("AHT20 not found!");
+while (1);
+}
+
+Serial.println("ESP32 Serial Listening Started!");
+startTime = millis();
+}
+
+void loop() {
+// Check for serial input
+if (Serial.available()) {
+String input = Serial.readStringUntil('\n');
+input.trim(); // Remove whitespace
+
+int commaIndex = input.indexOf(',');
+if (commaIndex > 0) {
+int resetFlag = input.substring(0, commaIndex).toInt();
+float newInterval = input.substring(commaIndex + 1).toFloat();
+
+if (resetFlag == 1) {
+startTime = millis(); // Reset start time
+lastReadTime = startTime; // Reset last read time
+printTime = true;  // Start printing time
+}
+else if (resetFlag == 0) {
+startTime = millis(); // Reset start time
+lastReadTime = startTime; // Reset last read time
+printTime = false;  // Print 0 instead of time
+}
+
+if (newInterval >= 0.01) { // Prevent 0 or negative values
+interval = newInterval;
+}
+}
+}
+
+unsigned long currentTime = millis() - startTime;
+if (currentTime - lastReadTime >= (interval * 1000)) {
+lastReadTime = currentTime;
+sensors_event_t humidity, temp;
+aht.getEvent(&humidity, &temp); // Get humidity reading
+
+if (printTime) {
+Serial.printf("%lu,%.1f,E\n", currentTime, humidity.relative_humidity);  // Print time
+} else {
+Serial.printf("0,%.1f,E\n", humidity.relative_humidity);  // Print 0 instead of time
+}
+}
+}
+
