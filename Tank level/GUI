@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>ESP32 Voltage Dashboard</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns"></script>
+<style>
+  :root{
+    --bg:#0b0f14; --panel:#141a22; --ink:#eaf6ff; --muted:#9fb0c3;
+    --accent:#00e5ff; --outline:#243244; --good:#39d98a; --warn:#f5c451; --bad:#ff6b6b;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:14.5px/1.45 "Inter",system-ui,Segoe UI,Arial}
+  a{color:var(--accent);text-decoration:none}
+  .wrap{max-width:1200px;margin:auto;padding:20px}
+  header{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px}
+  .brand{display:flex;gap:10px;align-items:center}
+  .dot{width:10px;height:10px;border-radius:50%;background:var(--accent);box-shadow:0 0 10px var(--accent)}
+  h1{font-size:1.4rem;margin:0}
+  .status{display:flex;gap:8px;align-items:center}
+  .badge{border:1px solid var(--outline);padding:4px 8px;border-radius:999px;color:var(--muted)}
+  .badge.ok{border-color:var(--good);color:var(--good)}
+  .badge.warn{border-color:var(--warn);color:var(--warn)}
+  .badge.err{border-color:var(--bad);color:var(--bad)}
+
+  .shell{display:grid;grid-template-columns:360px 1fr;gap:18px}
+  @media (max-width: 900px){ .shell{grid-template-columns:1fr} }
+
+  .card{background:var(--panel);border:1px solid var(--outline);border-radius:14px;box-shadow:0 10px 28px rgba(0,0,0,.35)}
+  .pad{padding:16px}
+
+  .controls{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:8px;align-items:center}
+  .controls label{display:flex;align-items:center;gap:8px;border:1px solid var(--outline);background:#0f141c;
+                  padding:6px 10px;border-radius:10px;color:var(--muted)}
+  .controls select,.controls input[type=number]{border:none;background:transparent;color:var(--ink);outline:none}
+  .controls button{border:1px solid var(--outline);background:#0f141c;color:var(--ink);padding:8px 12px;border-radius:10px;cursor:pointer}
+  .controls button:hover{border-color:var(--accent)}
+  .controls .switch{display:flex;align-items:center;gap:8px}
+
+  .tableWrap{max-height:520px;overflow:auto;border-radius:12px;border:1px solid var(--outline)}
+  table{width:100%;border-collapse:collapse}
+  thead th{position:sticky;top:0;background:#1a212b;color:#c8d5e6;font-weight:600}
+  th,td{padding:8px 10px;border-bottom:1px solid #1f2935}
+  tbody tr:hover{background:#10161f}
+
+  .chartBox{height:520px;padding:10px 12px 6px}
+
+  #gate{position:fixed;inset:0;background:linear-gradient(180deg,rgba(0,0,0,.65),rgba(0,0,0,.75));
+        display:flex;align-items:center;justify-content:center;padding:20px}
+  #gate .panel{width:100%;max-width:380px;background:var(--panel);border:1px solid var(--outline);border-radius:16px;padding:22px}
+  #gate h2{margin:0 0 8px}
+  #gate p{margin:0 0 14px;color:var(--muted)}
+  #gate input{width:100%;padding:10px 12px;border-radius:10px;border:1px solid var(--outline);background:#0f141c;color:var(--ink)}
+  #gate button{margin-top:10px;width:100%;padding:10px;border-radius:10px;border:1px solid var(--outline);background:#0f141c;color:var(--ink);cursor:pointer}
+  #gate button:hover{border-color:var(--accent)}
+  #denied{color:var(--bad);margin-top:10px;min-height:18px}
+</style>
+</head>
+<body>
+
+<div id="gate">
+  <div class="panel">
+    <h2>ESP32 Voltage Dashboard</h2>
+    <p>Enter password to view live data.</p>
+    <input id="pw" type="password" placeholder="Password" autocomplete="current-password" />
+    <button id="enterBtn">Enter</button>
+    <div id="denied"></div>
+  </div>
+</div>
+
+<div class="wrap" id="app" style="display:none;">
+  <header>
+    <div class="brand">
+      <span class="dot"></span>
+      <h1>ESP32 Voltage Dashboard</h1>
+    </div>
+    <div class="status">
+      <span id="connBadge" class="badge warn">Connecting…</span>
+      <span id="lastTs" class="badge">—</span>
+      <a class="badge" href="https://dcgcode.neocities.org/logs/data.csv" download>Download CSV</a>
+    </div>
+  </header>
+
+  <div class="card pad" style="margin-bottom:16px;">
+    <div class="controls">
+      <label>Points
+        <select id="pointsSel">
+          <option>10</option><option selected>20</option><option>50</option><option>100</option><option>200</option>
+        </select>
+      </label>
+      <label>X-axis
+        <select id="unitSel">
+          <option value="second">Seconds</option>
+          <option value="minute" selected>Minutes</option>
+          <option value="hour">Hours</option>
+        </select>
+      </label>
+      <label>Refresh (s)
+        <input id="refreshInp" type="number" min="2" step="1" value="10" />
+      </label>
+      <span class="switch">
+        <input id="autoY" type="checkbox" />
+        <label for="autoY" style="cursor:pointer;color:var(--muted)">Auto-scale Y</label>
+      </span>
+      <button id="typeBtn">Line ▸ Scatter</button>
+      <button id="applyBtn">Apply</button>
+    </div>
+  </div>
+
+  <div class="shell">
+    <div class="card pad">
+      <div style="margin-bottom:8px;font-weight:600;color:#c8d5e6">Latest Readings</div>
+      <div class="tableWrap">
+        <table>
+          <thead><tr><th style="width:58%">Timestamp</th><th>Voltage (V)</th></tr></thead>
+          <tbody id="tbody"></tbody>
+        </table>
+      </div>
+    </div>
+    <div class="card chartBox">
+      <canvas id="chart"></canvas>
+      <div id="status" style="padding:6px 4px;color:var(--muted)"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+/* CONFIG */
+const CSV_URL  = "https://dcgcode.neocities.org/logs/data.csv";
+const PASSWORD = "password";   // <-- your password
+/* -------- */
+
+let MAX_POINTS   = 20;
+let REFRESH_MS   = 10000;
+let X_UNIT       = "minute";
+let AUTO_SCALE_Y = false;
+let CHART_TYPE   = "line";
+
+const elApp=document.getElementById('app'), elGate=document.getElementById('gate'),
+elDenied=document.getElementById('denied'), elPointsSel=document.getElementById('pointsSel'),
+elUnitSel=document.getElementById('unitSel'), elRefreshInp=document.getElementById('refreshInp'),
+elAutoY=document.getElementById('autoY'), elTypeBtn=document.getElementById('typeBtn'),
+elApplyBtn=document.getElementById('applyBtn'), elTbody=document.getElementById('tbody'),
+elStatus=document.getElementById('status'), elConn=document.getElementById('connBadge'),
+elLastTs=document.getElementById('lastTs');
+
+const ctx=document.getElementById('chart').getContext('2d');
+const chart=new Chart(ctx,{
+  type:CHART_TYPE,
+  data:{datasets:[{label:'Voltage (V)',data:[],tension:0.18,pointRadius:2,borderWidth:2,borderColor:'#00e5ff'}]},
+  options:{
+    responsive:true,animation:false,maintainAspectRatio:false,
+    scales:{
+      x:{type:'time',time:{unit:X_UNIT},grid:{color:'rgba(255,255,255,.06)'},ticks:{color:'#cdd8e7'},title:{display:true,text:'Time'}},
+      y:{grid:{color:'rgba(255,255,255,.06)'},ticks:{color:'#cdd8e7'},title:{display:true,text:'Volts'},min:0,max:3.5}
+    },plugins:{legend:{labels:{color:'#eaf6ff'}}}
+  }
+});
+
+let timer=null;
+function setConn(txt,cls){elConn.textContent=txt;elConn.className='badge '+cls}
+async function poll(){
+  try{
+    setConn('Fetching…','warn');
+    const res=await fetch(CSV_URL+'?'+Date.now(),{cache:'no-store'});
+    if(!res.ok) throw new Error('HTTP '+res.status);
+    const rows=(await res.text()).trim().split('\n').slice(1);
+    const pts=rows.map(r=>{const[ts,v]=r.split(',');return{x:new Date(ts.replace(' ','T')),y:+v}});
+    const lastPts=pts.slice(-MAX_POINTS);
+    chart.data.datasets[0].data=lastPts;
+    chart.options.scales.x.time.unit=X_UNIT;
+    chart.options.scales.y.min=AUTO_SCALE_Y?undefined:0;
+    chart.options.scales.y.max=AUTO_SCALE_Y?undefined:3.5;
+    chart.update('none');
+    elTbody.innerHTML='';
+    rows.slice(-MAX_POINTS).reverse().forEach(r=>{
+      const[ts,v]=r.split(',');elTbody.insertAdjacentHTML('beforeend',`<tr><td>${ts}</td><td>${(+v).toFixed(2)}</td></tr>`);
+    });
+    if(lastPts.length) elLastTs.textContent=lastPts[lastPts.length-1].x.toLocaleString();
+    elStatus.textContent='Last update: '+new Date().toLocaleTimeString();
+    setConn('Live','ok');
+  }catch(err){setConn('Error','err');elStatus.textContent='Error: '+err}
+}
+function start(){if(timer)clearInterval(timer);timer=setInterval(poll,REFRESH_MS);poll();}
+elApplyBtn.onclick=()=>{MAX_POINTS=+elPointsSel.value;X_UNIT=elUnitSel.value;REFRESH_MS=Math.max(2000,+elRefreshInp.value*1000);
+AUTO_SCALE_Y=elAutoY.checked;start();}
+elTypeBtn.onclick=()=>{CHART_TYPE=CHART_TYPE==='line'?'scatter':'line';chart.config.type=CHART_TYPE;elTypeBtn.textContent=CHART_TYPE==='line'?'Line ▸ Scatter':'Scatter ▸ Line';chart.update();}
+document.getElementById('enterBtn').onclick=()=>{if(document.getElementById('pw').value===PASSWORD){elGate.style.display='none';elApp.style.display='';start()}else elDenied.textContent='Incorrect password';};
+document.getElementById('pw').onkeydown=e=>{if(e.key==='Enter')document.getElementById('enterBtn').click()};
+</script>
+</body>
+</html>
