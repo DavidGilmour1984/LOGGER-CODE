@@ -1,0 +1,134 @@
+#include <WiFi.h>
+#include <WiFiClientSecure.h>
+#include <HTTPClient.h>
+#include <LittleFS.h>
+#include "time.h"
+
+// ==== USER SETTINGS ====
+const char* WIFI_SSID = "G2.4";
+const char* WIFI_PASS = "";
+const char* NEOCITIES_API_KEY = "";
+const char* REMOTE_FILENAME = "logs/data.csv";
+
+const int   ADC_PIN = 34;
+const float VREF = 3.3f;
+
+// Timing
+unsigned long lastSample = 0;
+const unsigned long SAMPLE_MS = 10000;  // 10 s between samples
+unsigned long lastUpload = 0;
+const unsigned long UPLOAD_MS = 20000;  // upload every 20 s
+
+const char* CSV_HEADER = "timestamp,voltage\n";
+
+// ==== Time (Hamilton, NZ) ====
+const char* ntpServer          = "pool.ntp.org";
+const long gmtOffset_sec       = 12 * 3600;  // NZST = UTC+12
+const int daylightOffset_sec   = 3600;       // add +1h in summer (NZDT)
+
+String currentTimestamp() {
+  struct tm timeinfo;
+  if (!getLocalTime(&timeinfo)) return "1970-01-01 00:00:00";
+  char buf[25];
+  strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", &timeinfo);
+  return String(buf);
+}
+
+float readAnalogVolts() {
+  int raw = analogRead(ADC_PIN);           // 0–4095
+  return (raw * VREF) / 4095.0f;
+}
+
+void appendRow() {
+  File f = LittleFS.open("/data.csv", FILE_APPEND);
+  if (!f) {
+    Serial.println("Failed to open CSV for appending");
+    return;
+  }
+  String row = currentTimestamp() + "," + String(readAnalogVolts(), 2) + "\n";
+  f.print(row);
+  f.close();
+  Serial.print("Appended row: "); Serial.println(row);
+}
+
+bool uploadToNeocities() {
+  File f = LittleFS.open("/data.csv", FILE_READ);
+  if (!f) {
+    Serial.println("No CSV file to upload");
+    return false;
+  }
+  size_t size = f.size();
+  std::unique_ptr<uint8_t[]> buf(new uint8_t[size]);
+  f.read(buf.get(), size);
+  f.close();
+
+  String boundary = "----ESP32Boundary";
+  String start =
+    "--" + boundary + "\r\n"
+    "Content-Disposition: form-data; name=\"" + String(REMOTE_FILENAME) + "\"; filename=\"data.csv\"\r\n"
+    "Content-Type: text/csv\r\n\r\n";
+  String end = "\r\n--" + boundary + "--\r\n";
+
+  size_t len = start.length() + size + end.length();
+  std::unique_ptr<uint8_t[]> body(new uint8_t[len]);
+  memcpy(body.get(), start.c_str(), start.length());
+  memcpy(body.get() + start.length(), buf.get(), size);
+  memcpy(body.get() + start.length() + size, end.c_str(), end.length());
+
+  WiFiClientSecure client;
+  client.setInsecure();
+  HTTPClient http;
+  if (!http.begin(client, "https://neocities.org/api/upload")) {
+    Serial.println("Failed to connect to Neocities");
+    return false;
+  }
+  http.addHeader("Authorization", String("Bearer ") + NEOCITIES_API_KEY);
+  http.addHeader("Content-Type", "multipart/form-data; boundary=" + boundary);
+  int code = http.POST(body.get(), len);
+  http.end();
+  Serial.printf("Upload HTTP %d\n", code);
+  return (code >= 200 && code < 300);
+}
+
+void setup() {
+  Serial.begin(115200);
+  if (!LittleFS.begin(true)) {
+    Serial.println("LittleFS mount failed");
+    while (true) delay(100);
+  }
+
+  // Create new CSV only if it doesn't exist
+  if (!LittleFS.exists("/data.csv")) {
+    File f = LittleFS.open("/data.csv", FILE_WRITE);
+    if (f) {
+      f.print(CSV_HEADER);
+      f.close();
+      Serial.println("Created new CSV with header");
+    }
+  } else {
+    Serial.println("CSV exists, appending data");
+  }
+
+  WiFi.begin(WIFI_SSID, WIFI_PASS);
+  while (WiFi.status() != WL_CONNECTED) { delay(500); Serial.print("."); }
+  Serial.println("\nConnected to WiFi");
+  Serial.print("IP: "); Serial.println(WiFi.localIP());
+
+  configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
+  analogReadResolution(12);
+  analogSetPinAttenuation(ADC_PIN, ADC_11db); // ~0–3.6 V
+}
+
+void loop() {
+  unsigned long now = millis();
+
+  if (now - lastSample >= SAMPLE_MS) {
+    lastSample = now;
+    appendRow();
+  }
+
+  if (now - lastUpload >= UPLOAD_MS && WiFi.status() == WL_CONNECTED) {
+    lastUpload = now;
+    uploadToNeocities();
+  }
+}
