@@ -5,26 +5,30 @@
 #include "time.h"
 
 // ==== USER SETTINGS ====
-const char* WIFI_SSID = "G2.4";
+const char* WIFI_SSID = "DPhone";
 const char* WIFI_PASS = "";
 const char* NEOCITIES_API_KEY = "";
-const char* REMOTE_FILENAME = "logs/data.csv";
+const char* REMOTE_FILENAME = "logs/data.csv";  // Neocities will create nested folders if needed
 
-const int   ADC_PIN = 34;
-const float VREF = 3.3f;
+const int   ADC_PIN = 36;   // Pressure transducer on GPIO36
+const float VREF    = 3.3f; // Effective reference (0–4095 ADC)
+
+// Transducer scaling
+const float MAX_DEPTH_M = 5.0;   // Sensor range 0–5 m
+const float MAX_ADC_V   = 3.3;   // Voltage span after divider
 
 // Timing
 unsigned long lastSample = 0;
-const unsigned long SAMPLE_MS = 10000;  // 10 s between samples
+const unsigned long SAMPLE_MS  = 10000;  // 10 s between samples
 unsigned long lastUpload = 0;
-const unsigned long UPLOAD_MS = 20000;  // upload every 20 s
+const unsigned long UPLOAD_MS  = 20000;  // 20 s between uploads
 
-const char* CSV_HEADER = "timestamp,voltage\n";
+const char* CSV_HEADER = "timestamp,depth_m\n";
 
 // ==== Time (Hamilton, NZ) ====
-const char* ntpServer          = "pool.ntp.org";
-const long gmtOffset_sec       = 12 * 3600;  // NZST = UTC+12
-const int daylightOffset_sec   = 3600;       // add +1h in summer (NZDT)
+const char* ntpServer        = "pool.ntp.org";
+const long  gmtOffset_sec    = 12 * 3600;  // NZST = UTC+12
+const int   daylightOffset_sec = 3600;     // +1h in summer (NZDT)
 
 String currentTimestamp() {
   struct tm timeinfo;
@@ -34,9 +38,40 @@ String currentTimestamp() {
   return String(buf);
 }
 
-float readAnalogVolts() {
+// Convert ADC → volts → depth in meters
+float readDepth() {
   int raw = analogRead(ADC_PIN);           // 0–4095
-  return (raw * VREF) / 4095.0f;
+  float volts = (raw * VREF) / 4095.0f;
+  float depth = (volts / MAX_ADC_V) * MAX_DEPTH_M;
+  return depth;
+}
+
+bool createFreshCSV() {
+  if (!LittleFS.begin(false)) {
+    if (!LittleFS.begin(true)) {
+      Serial.println("LittleFS mount failed");
+      return false;
+    }
+  }
+  Serial.println("Formatting LittleFS (erasing all files)...");
+  if (!LittleFS.format()) {
+    Serial.println("LittleFS.format() failed");
+    return false;
+  }
+  LittleFS.end();
+  if (!LittleFS.begin(false)) {
+    Serial.println("LittleFS re-mount failed after format");
+    return false;
+  }
+  File f = LittleFS.open("/data.csv", FILE_WRITE);
+  if (!f) {
+    Serial.println("Failed to create /data.csv");
+    return false;
+  }
+  f.print(CSV_HEADER);
+  f.close();
+  Serial.println("Created fresh /data.csv with header");
+  return true;
 }
 
 void appendRow() {
@@ -45,7 +80,7 @@ void appendRow() {
     Serial.println("Failed to open CSV for appending");
     return;
   }
-  String row = currentTimestamp() + "," + String(readAnalogVolts(), 2) + "\n";
+  String row = currentTimestamp() + "," + String(readDepth(), 2) + "\n";
   f.print(row);
   f.close();
   Serial.print("Appended row: "); Serial.println(row);
@@ -92,31 +127,30 @@ bool uploadToNeocities() {
 
 void setup() {
   Serial.begin(115200);
-  if (!LittleFS.begin(true)) {
-    Serial.println("LittleFS mount failed");
+  delay(100);
+
+  if (!createFreshCSV()) {
+    Serial.println("Filesystem init failed; halting.");
     while (true) delay(100);
   }
 
-  // Create new CSV only if it doesn't exist
-  if (!LittleFS.exists("/data.csv")) {
-    File f = LittleFS.open("/data.csv", FILE_WRITE);
-    if (f) {
-      f.print(CSV_HEADER);
-      f.close();
-      Serial.println("Created new CSV with header");
-    }
-  } else {
-    Serial.println("CSV exists, appending data");
-  }
-
   WiFi.begin(WIFI_SSID, WIFI_PASS);
+  Serial.print("Connecting to WiFi");
   while (WiFi.status() != WL_CONNECTED) { delay(500); Serial.print("."); }
   Serial.println("\nConnected to WiFi");
   Serial.print("IP: "); Serial.println(WiFi.localIP());
 
   configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
+
   analogReadResolution(12);
-  analogSetPinAttenuation(ADC_PIN, ADC_11db); // ~0–3.6 V
+  analogSetPinAttenuation(ADC_PIN, ADC_11db);
+
+  appendRow();
+  uploadToNeocities();
+
+  unsigned long now = millis();
+  lastSample = now;
+  lastUpload = now;
 }
 
 void loop() {
