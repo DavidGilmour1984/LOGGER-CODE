@@ -28,7 +28,7 @@ const char* CSV_HEADER = "timestamp,depth_m\n";
 // ==== Time (Hamilton, NZ) ====
 const char* ntpServer        = "pool.ntp.org";
 const long  gmtOffset_sec    = 12 * 3600;  // NZST = UTC+12
-const int   daylightOffset_sec = 3600;     // +1h in summer (NZDT)
+const int   daylightOffset_sec = 0;     // +1h in summer (NZDT)
 
 String currentTimestamp() {
   struct tm timeinfo;
