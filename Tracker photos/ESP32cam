@@ -1,0 +1,272 @@
+/**** ESP32-CAM → Neocities JPEG Uploader (AI-Thinker) ****
+ * - Captures a JPEG at an interval
+ * - Uploads to https://neocities.org/api/upload using your API key
+ * - Remote path: photos/YYYYMMDD_HHMMSS.jpg  (folder is auto-created)
+ * - Blinks onboard flash LED for capture and after successful upload
+ ***********************************************************/
+
+#include "esp_camera.h"
+#include <WiFi.h>
+#include <WiFiClientSecure.h>
+#include <HTTPClient.h>
+#include "time.h"
+
+// ================== USER SETTINGS ==================
+const char* WIFI_SSID = "G2.4";
+const char* WIFI_PASS = "";
+const char* NEOCITIES_API_KEY = "";
+
+// Capture every N milliseconds
+const uint32_t CAPTURE_MS    = 30000;   // 30 s between photos
+
+// NZ time (Hamilton)
+const char* ntpServer        = "pool.ntp.org";
+const long  gmtOffset_sec    = 12 * 3600;  // NZST = UTC+12
+const int   daylightOffset_s = 3600;       // NZDT +1h in summer
+
+// Remote folder on your site (auto-created by Neocities on first upload)
+const char* REMOTE_DIR       = "photos";
+
+// Blink timings (ms)
+const uint16_t BLINK_SHORT   = 120;
+const uint16_t BLINK_LONG    = 250;
+
+// ================== CAMERA PINOUT (AI-Thinker) ==================
+#define PWDN_GPIO_NUM     32
+#define RESET_GPIO_NUM    -1
+#define XCLK_GPIO_NUM      0
+#define SIOD_GPIO_NUM     26
+#define SIOC_GPIO_NUM     27
+
+#define Y9_GPIO_NUM       35
+#define Y8_GPIO_NUM       34
+#define Y7_GPIO_NUM       39
+#define Y6_GPIO_NUM       36
+#define Y5_GPIO_NUM       21
+#define Y4_GPIO_NUM       19
+#define Y3_GPIO_NUM       18
+#define Y2_GPIO_NUM        5
+#define VSYNC_GPIO_NUM    25
+#define HREF_GPIO_NUM     23
+#define PCLK_GPIO_NUM     22
+
+// Onboard flash LED (white) on AI-Thinker
+#define FLASH_LED_PIN      4
+
+// ================== HELPERS ==================
+static void blink(uint16_t on_ms, uint16_t off_ms=120) {
+  digitalWrite(FLASH_LED_PIN, HIGH);
+  delay(on_ms);
+  digitalWrite(FLASH_LED_PIN, LOW);
+  delay(off_ms);
+}
+
+String filenameTimestamp() {
+  struct tm ti;
+  if (getLocalTime(&ti)) {
+    char buf[32];
+    // YYYYMMDD_HHMMSS
+    strftime(buf, sizeof(buf), "%Y%m%d_%H%M%S", &ti);
+    return String(buf);
+  }
+  // Fallback if NTP not ready yet
+  return String(millis());
+}
+
+bool initCamera() {
+  camera_config_t config = {};
+  config.ledc_channel = LEDC_CHANNEL_0;
+  config.ledc_timer   = LEDC_TIMER_0;
+  config.pin_d0       = Y2_GPIO_NUM;
+  config.pin_d1       = Y3_GPIO_NUM;
+  config.pin_d2       = Y4_GPIO_NUM;
+  config.pin_d3       = Y5_GPIO_NUM;
+  config.pin_d4       = Y6_GPIO_NUM;
+  config.pin_d5       = Y7_GPIO_NUM;
+  config.pin_d6       = Y8_GPIO_NUM;
+  config.pin_d7       = Y9_GPIO_NUM;
+  config.pin_xclk     = XCLK_GPIO_NUM;
+  config.pin_pclk     = PCLK_GPIO_NUM;
+  config.pin_vsync    = VSYNC_GPIO_NUM;
+  config.pin_href     = HREF_GPIO_NUM;
+  config.pin_sccb_sda = SIOD_GPIO_NUM;
+  config.pin_sccb_scl = SIOC_GPIO_NUM;
+  config.pin_pwdn     = PWDN_GPIO_NUM;
+  config.pin_reset    = RESET_GPIO_NUM;
+  config.xclk_freq_hz = 20000000;
+  config.pixel_format = PIXFORMAT_JPEG;
+
+  if (psramFound()) {
+    // Larger frame / better quality if PSRAM is present
+    config.frame_size    = FRAMESIZE_UXGA; // 1600x1200
+    config.jpeg_quality  = 12;             // lower = better quality
+    config.fb_count      = 2;
+    config.grab_mode     = CAMERA_GRAB_LATEST;
+  } else {
+    config.frame_size    = FRAMESIZE_SVGA; // 800x600
+    config.jpeg_quality  = 15;
+    config.fb_count      = 1;
+    config.grab_mode     = CAMERA_GRAB_WHEN_EMPTY;
+  }
+
+  esp_err_t err = esp_camera_init(&config);
+  if (err != ESP_OK) {
+    Serial.printf("Camera init failed: 0x%X\n", err);
+    return false;
+  }
+  sensor_t * s = esp_camera_sensor_get();
+  if (s) {
+    // Optional tweaks
+    s->set_brightness(s, 0);
+    s->set_contrast(s, 0);
+    s->set_saturation(s, 0);
+    s->set_whitebal(s, 1);
+    s->set_gain_ctrl(s, 1);
+    s->set_exposure_ctrl(s, 1);
+    s->set_awb_gain(s, 1);
+    s->set_wb_mode(s, 0);
+    s->set_special_effect(s, 0);
+  }
+  return true;
+}
+
+bool uploadJpegToNeocities(const uint8_t* data, size_t len, const String& remote_path, int* out_http_code=nullptr) {
+  // Build multipart/form-data body
+  String boundary = "----ESP32CAMBoundary" + String((uint32_t)millis());
+  String head =
+    "--" + boundary + "\r\n"
+    "Content-Disposition: form-data; name=\"" + remote_path + "\"; filename=\"" + remote_path.substring(remote_path.lastIndexOf('/')+1) + "\"\r\n"
+    "Content-Type: image/jpeg\r\n\r\n";
+  String tail = "\r\n--" + boundary + "--\r\n";
+
+  size_t totalLen = head.length() + len + tail.length();
+  uint8_t* body = (uint8_t*)malloc(totalLen);
+  if (!body) {
+    Serial.println("malloc() failed for multipart body");
+    return false;
+  }
+  memcpy(body, head.c_str(), head.length());
+  memcpy(body + head.length(), data, len);
+  memcpy(body + head.length() + len, tail.c_str(), tail.length());
+
+  WiFiClientSecure client;
+  client.setInsecure();  // skip CA for simplicity
+
+  HTTPClient http;
+  bool ok = false;
+  if (http.begin(client, "https://neocities.org/api/upload")) {
+    http.addHeader("Authorization", String("Bearer ") + NEOCITIES_API_KEY);
+    http.addHeader("Content-Type", "multipart/form-data; boundary=" + boundary);
+    int code = http.POST(body, totalLen);
+    if (out_http_code) *out_http_code = code;
+    Serial.printf("Upload HTTP %d (bytes: %u)\n", code, (unsigned)len);
+    ok = (code >= 200 && code < 300);
+    http.end();
+  } else {
+    Serial.println("HTTP begin() failed");
+  }
+
+  free(body);
+  return ok;
+}
+
+bool captureAndUploadOnce() {
+  // Blink before capture (quick)
+  blink(BLINK_SHORT);
+
+  camera_fb_t* fb = esp_camera_fb_get();
+  if (!fb) {
+    Serial.println("Camera capture failed");
+    return false;
+  }
+  if (fb->format != PIXFORMAT_JPEG) {
+    Serial.println("Frame not JPEG; reconfig your camera to JPEG.");
+    esp_camera_fb_return(fb);
+    return false;
+  }
+
+  // Build remote path: photos/YYYYMMDD_HHMMSS.jpg
+  String name = filenameTimestamp() + ".jpg";
+  String remote = String(REMOTE_DIR) + "/" + name;
+
+  Serial.printf("Uploading %s (%u bytes)\n", remote.c_str(), (unsigned)fb->len);
+  int httpCode = -1;
+  bool ok = uploadJpegToNeocities(fb->buf, fb->len, remote, &httpCode);
+  esp_camera_fb_return(fb);
+
+  if (ok) {
+    // Success blink (longer)
+    blink(BLINK_LONG);
+    Serial.println("Upload OK");
+  } else {
+    Serial.printf("Upload failed (HTTP %d)\n", httpCode);
+  }
+  return ok;
+}
+
+// ================== SETUP / LOOP ==================
+void setup() {
+  pinMode(FLASH_LED_PIN, OUTPUT);
+  digitalWrite(FLASH_LED_PIN, LOW);
+
+  Serial.begin(115200);
+  delay(300);
+
+  // WiFi
+  Serial.printf("Connecting to WiFi: %s\n", WIFI_SSID);
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(WIFI_SSID, WIFI_PASS);
+  uint32_t start = millis();
+  while (WiFi.status() != WL_CONNECTED && millis() - start < 20000) {
+    delay(250);
+    Serial.print('.');
+  }
+  Serial.println();
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("WiFi connect FAILED. Rebooting in 5s...");
+    delay(5000);
+    ESP.restart();
+  }
+  Serial.print("WiFi OK, IP: ");
+  Serial.println(WiFi.localIP());
+
+  // NTP time
+  configTime(gmtOffset_sec, daylightOffset_s, ntpServer);
+
+  // Camera
+  if (!initCamera()) {
+    Serial.println("Camera init FAILED. Rebooting in 5s...");
+    delay(5000);
+    ESP.restart();
+  }
+
+  // Little hello blink
+  blink(BLINK_SHORT);
+  blink(BLINK_SHORT);
+}
+
+void loop() {
+  static uint32_t lastCapture = 0;
+  uint32_t now = millis();
+
+  if ((now - lastCapture) >= CAPTURE_MS) {
+    lastCapture = now;
+
+    if (WiFi.status() != WL_CONNECTED) {
+      Serial.println("WiFi dropped, reconnecting...");
+      WiFi.reconnect();
+      uint32_t t0 = millis();
+      while (WiFi.status() != WL_CONNECTED && millis() - t0 < 10000) {
+        delay(200);
+        Serial.print('*');
+      }
+      Serial.println();
+    }
+
+    if (WiFi.status() == WL_CONNECTED) {
+      captureAndUploadOnce();
+    } else {
+      Serial.println("Skip capture: no WiFi");
+    }
+  }
+}
