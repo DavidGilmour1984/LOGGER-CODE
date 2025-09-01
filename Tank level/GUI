@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<title>ESP32 Voltage Dashboard</title>
+<title>ESP32 Depth Dashboard</title>
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <link rel="preconnect" href="https://cdn.jsdelivr.net">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
@@ -18,7 +18,7 @@
   .wrap{max-width:1200px;margin:auto;padding:20px}
   header{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px}
   .brand{display:flex;gap:10px;align-items:center}
-  .dot{width:10px;height:10px;border-radius:50%;background:var(--accent);box-shadow:0 0 10px var(--accent)}
+  .dot{width:10px;height:10px;border-radius:5%;background:var(--accent);box-shadow:0 0 10px var(--accent)}
   h1{font-size:1.4rem;margin:0}
   .status{display:flex;gap:8px;align-items:center}
   .badge{border:1px solid var(--outline);padding:4px 8px;border-radius:999px;color:var(--muted)}
@@ -63,7 +63,7 @@
 
 <div id="gate">
   <div class="panel">
-    <h2>ESP32 Voltage Dashboard</h2>
+    <h2>ESP32 Depth Dashboard</h2>
     <p>Enter password to view live data.</p>
     <input id="pw" type="password" placeholder="Password" autocomplete="current-password" />
     <button id="enterBtn">Enter</button>
@@ -75,7 +75,7 @@
   <header>
     <div class="brand">
       <span class="dot"></span>
-      <h1>ESP32 Voltage Dashboard</h1>
+      <h1>ESP32 Depth Dashboard</h1>
     </div>
     <div class="status">
       <span id="connBadge" class="badge warn">Connecting…</span>
@@ -88,7 +88,7 @@
     <div class="controls">
       <label>Points
         <select id="pointsSel">
-          <option>10</option><option selected>20</option><option>50</option><option>100</option><option>200</option>
+          <option>10</option><option selected>20</option><option>5</option><option>100</option><option>200</option>
         </select>
       </label>
       <label>X-axis
@@ -115,7 +115,7 @@
       <div style="margin-bottom:8px;font-weight:600;color:#c8d5e6">Latest Readings</div>
       <div class="tableWrap">
         <table>
-          <thead><tr><th style="width:58%">Timestamp</th><th>Voltage (V)</th></tr></thead>
+          <thead><tr><th style="width:58%">Timestamp</th><th>Depth (m)</th></tr></thead>
           <tbody id="tbody"></tbody>
         </table>
       </div>
@@ -150,12 +150,12 @@ elLastTs=document.getElementById('lastTs');
 const ctx=document.getElementById('chart').getContext('2d');
 const chart=new Chart(ctx,{
   type:CHART_TYPE,
-  data:{datasets:[{label:'Voltage (V)',data:[],tension:0.18,pointRadius:2,borderWidth:2,borderColor:'#00e5ff'}]},
+  data:{datasets:[{label:'Depth (m)',data:[],tension:0.18,pointRadius:2,borderWidth:2,borderColor:'#00e5ff'}]},
   options:{
     responsive:true,animation:false,maintainAspectRatio:false,
     scales:{
       x:{type:'time',time:{unit:X_UNIT},grid:{color:'rgba(255,255,255,.06)'},ticks:{color:'#cdd8e7'},title:{display:true,text:'Time'}},
-      y:{grid:{color:'rgba(255,255,255,.06)'},ticks:{color:'#cdd8e7'},title:{display:true,text:'Volts'},min:0,max:3.5}
+      y:{grid:{color:'rgba(255,255,255,.06)'},ticks:{color:'#cdd8e7'},title:{display:true,text:'Depth (m)'},min:0,max:5}
     },plugins:{legend:{labels:{color:'#eaf6ff'}}}
   }
 });
@@ -168,16 +168,20 @@ async function poll(){
     const res=await fetch(CSV_URL+'?'+Date.now(),{cache:'no-store'});
     if(!res.ok) throw new Error('HTTP '+res.status);
     const rows=(await res.text()).trim().split('\n').slice(1);
-    const pts=rows.map(r=>{const[ts,v]=r.split(',');return{x:new Date(ts.replace(' ','T')),y:+v}});
+    const pts=rows.map(r=>{
+      const[ts,d]=r.split(',');
+      return{x:new Date(ts.replace(' ','T')),y:+d};
+    });
     const lastPts=pts.slice(-MAX_POINTS);
     chart.data.datasets[0].data=lastPts;
     chart.options.scales.x.time.unit=X_UNIT;
     chart.options.scales.y.min=AUTO_SCALE_Y?undefined:0;
-    chart.options.scales.y.max=AUTO_SCALE_Y?undefined:3.5;
+    chart.options.scales.y.max=AUTO_SCALE_Y?undefined:5;
     chart.update('none');
     elTbody.innerHTML='';
     rows.slice(-MAX_POINTS).reverse().forEach(r=>{
-      const[ts,v]=r.split(',');elTbody.insertAdjacentHTML('beforeend',`<tr><td>${ts}</td><td>${(+v).toFixed(2)}</td></tr>`);
+      const[ts,d]=r.split(',');
+      elTbody.insertAdjacentHTML('beforeend',`<tr><td>${ts}</td><td>${(+d).toFixed(2)}</td></tr>`);
     });
     if(lastPts.length) elLastTs.textContent=lastPts[lastPts.length-1].x.toLocaleString();
     elStatus.textContent='Last update: '+new Date().toLocaleTimeString();
