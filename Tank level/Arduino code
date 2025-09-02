@@ -28,7 +28,19 @@ const char* CSV_HEADER = "timestamp,depth_m\n";
 // ==== Time (Hamilton, NZ) ====
 const char* ntpServer        = "pool.ntp.org";
 const long  gmtOffset_sec    = 12 * 3600;  // NZST = UTC+12
-const int   daylightOffset_sec = 0;     // +1h in summer (NZDT)
+const int   daylightOffset_sec = 0;     // +1h in summer (NZDT), change to "3600" to adjust
+
+// Create UART2 on pins 16 (RX) and 17 (TX)
+HardwareSerial Serial2Port(2);
+
+void logBoth(const String &msg) {
+  Serial.print(msg);
+  Serial2Port.print(msg);
+}
+void logBothln(const String &msg) {
+  Serial.println(msg);
+  Serial2Port.println(msg);
+}
 
 String currentTimestamp() {
   struct tm timeinfo;
@@ -49,47 +61,47 @@ float readDepth() {
 bool createFreshCSV() {
   if (!LittleFS.begin(false)) {
     if (!LittleFS.begin(true)) {
-      Serial.println("LittleFS mount failed");
+      logBothln("LittleFS mount failed");
       return false;
     }
   }
-  Serial.println("Formatting LittleFS (erasing all files)...");
+  logBothln("Formatting LittleFS (erasing all files)...");
   if (!LittleFS.format()) {
-    Serial.println("LittleFS.format() failed");
+    logBothln("LittleFS.format() failed");
     return false;
   }
   LittleFS.end();
   if (!LittleFS.begin(false)) {
-    Serial.println("LittleFS re-mount failed after format");
+    logBothln("LittleFS re-mount failed after format");
     return false;
   }
   File f = LittleFS.open("/data.csv", FILE_WRITE);
   if (!f) {
-    Serial.println("Failed to create /data.csv");
+    logBothln("Failed to create /data.csv");
     return false;
   }
   f.print(CSV_HEADER);
   f.close();
-  Serial.println("Created fresh /data.csv with header");
+  logBothln("Created fresh /data.csv with header");
   return true;
 }
 
 void appendRow() {
   File f = LittleFS.open("/data.csv", FILE_APPEND);
   if (!f) {
-    Serial.println("Failed to open CSV for appending");
+    logBothln("Failed to open CSV for appending");
     return;
   }
   String row = currentTimestamp() + "," + String(readDepth(), 2) + "\n";
   f.print(row);
   f.close();
-  Serial.print("Appended row: "); Serial.println(row);
+  logBoth("Appended row: "); logBothln(row);
 }
 
 bool uploadToNeocities() {
   File f = LittleFS.open("/data.csv", FILE_READ);
   if (!f) {
-    Serial.println("No CSV file to upload");
+    logBothln("No CSV file to upload");
     return false;
   }
   size_t size = f.size();
@@ -114,31 +126,32 @@ bool uploadToNeocities() {
   client.setInsecure();
   HTTPClient http;
   if (!http.begin(client, "https://neocities.org/api/upload")) {
-    Serial.println("Failed to connect to Neocities");
+    logBothln("Failed to connect to Neocities");
     return false;
   }
   http.addHeader("Authorization", String("Bearer ") + NEOCITIES_API_KEY);
   http.addHeader("Content-Type", "multipart/form-data; boundary=" + boundary);
   int code = http.POST(body.get(), len);
   http.end();
-  Serial.printf("Upload HTTP %d\n", code);
+  logBoth("Upload HTTP "); logBothln(String(code));
   return (code >= 200 && code < 300);
 }
 
 void setup() {
-  Serial.begin(115200);
+  Serial.begin(9600);
+  Serial2Port.begin(9600, SERIAL_8N1, 16, 17); // RX=16, TX=17
   delay(100);
 
   if (!createFreshCSV()) {
-    Serial.println("Filesystem init failed; halting.");
+    logBothln("Filesystem init failed; halting.");
     while (true) delay(100);
   }
 
   WiFi.begin(WIFI_SSID, WIFI_PASS);
-  Serial.print("Connecting to WiFi");
-  while (WiFi.status() != WL_CONNECTED) { delay(500); Serial.print("."); }
-  Serial.println("\nConnected to WiFi");
-  Serial.print("IP: "); Serial.println(WiFi.localIP());
+  logBoth("Connecting to WiFi");
+  while (WiFi.status() != WL_CONNECTED) { delay(500); logBoth("."); }
+  logBothln("\nConnected to WiFi");
+  logBoth("IP: "); logBothln(WiFi.localIP().toString());
 
   configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
 
