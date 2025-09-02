@@ -1,0 +1,220 @@
+#include "esp_camera.h"
+#include <WiFi.h>
+#include <WiFiClientSecure.h>
+#include <HTTPClient.h>
+#include "time.h"
+#include "esp_sleep.h"
+#include "driver/gpio.h"
+
+// ==== USER SETTINGS ====
+const char* WIFI_SSID = "G2.4";
+const char* WIFI_PASS = "";
+const char* NEOCITIES_API_KEY = "";
+/**** ESP32-CAM → Neocities JPEG Uploader with JSON Index ****/
+
+const char* REMOTE_DIR = "photos";   // remote folder on site
+const uint32_t CAPTURE_MS = 30000;   // (unused now, preserved)
+
+const char* ntpServer        = "pool.ntp.org";
+const long  gmtOffset_sec    = 12 * 3600;  // NZST
+const int   daylightOffset_s = 3600;       // NZDT
+
+#define FLASH_LED_PIN      4
+#define TRIGGER_PIN       15           // Wake/trigger pin (goes HIGH to capture)
+#define COOLDOWN_US (30ULL * 1000000ULL)  // 30 seconds minimum between photos
+
+// ==== CAMERA PINOUT (AI-Thinker) ====
+#define PWDN_GPIO_NUM     32
+#define RESET_GPIO_NUM    -1
+#define XCLK_GPIO_NUM      0
+#define SIOD_GPIO_NUM     26
+#define SIOC_GPIO_NUM     27
+#define Y9_GPIO_NUM       35
+#define Y8_GPIO_NUM       34
+#define Y7_GPIO_NUM       39
+#define Y6_GPIO_NUM       36
+#define Y5_GPIO_NUM       21
+#define Y4_GPIO_NUM       19
+#define Y3_GPIO_NUM       18
+#define Y2_GPIO_NUM        5
+#define VSYNC_GPIO_NUM    25
+#define HREF_GPIO_NUM     23
+#define PCLK_GPIO_NUM     22
+
+// ==== Helpers ====
+String filenameTimestamp() {
+  struct tm ti;
+  if (getLocalTime(&ti)) {
+    char buf[32];
+    strftime(buf, sizeof(buf), "%Y%m%d_%H%M%S", &ti);
+    return String(buf);
+  }
+  return String(millis());
+}
+
+bool uploadMultipart(const String& filename, const uint8_t* data, size_t len, const char* mime) {
+  String boundary = "----ESP32Boundary" + String((uint32_t)millis());
+  String head =
+    "--" + boundary + "\r\n"
+    "Content-Disposition: form-data; name=\"" + filename + "\"; filename=\"" + filename.substring(filename.lastIndexOf('/')+1) + "\"\r\n"
+    "Content-Type: " + String(mime) + "\r\n\r\n";
+  String tail = "\r\n--" + boundary + "--\r\n";
+
+  size_t total = head.length() + len + tail.length();
+  uint8_t* body = (uint8_t*)malloc(total);
+  if (!body) return false;
+  memcpy(body, head.c_str(), head.length());
+  memcpy(body + head.length(), data, len);
+  memcpy(body + head.length() + len, tail.c_str(), tail.length());
+
+  WiFiClientSecure client;
+  client.setInsecure();
+  HTTPClient http;
+  if (!http.begin(client, "https://neocities.org/api/upload")) return false;
+  http.addHeader("Authorization", String("Bearer ") + NEOCITIES_API_KEY);
+  http.addHeader("Content-Type", "multipart/form-data; boundary=" + boundary);
+  int code = http.POST(body, total);
+  free(body);
+  http.end();
+  Serial.printf("Upload %s HTTP %d\n", filename.c_str(), code);
+  return (code >= 200 && code < 300);
+}
+
+bool captureAndUpload() {
+  digitalWrite(FLASH_LED_PIN, HIGH);
+  delay(100);
+
+  camera_fb_t* fb = esp_camera_fb_get();
+  digitalWrite(FLASH_LED_PIN, LOW);
+  if (!fb) { Serial.println("Camera capture failed"); return false; }
+
+  String name = filenameTimestamp() + ".jpg";
+  String remotePath = String(REMOTE_DIR) + "/" + name;
+
+  // Upload the photo
+  bool ok = uploadMultipart(remotePath, fb->buf, fb->len, "image/jpeg");
+  esp_camera_fb_return(fb);
+  if (!ok) return false;
+
+  // Update JSON index
+  static String json = "[]";
+  if (json == "[]") json = "[\"" + name + "\"]";
+  else json = json.substring(0, json.length()-1) + ",\"" + name + "\"]";
+  uploadMultipart(String(REMOTE_DIR) + "/photos.json", (uint8_t*)json.c_str(), json.length(), "application/json");
+
+  return true;
+}
+
+bool initCamera() {
+  camera_config_t config;
+  config.ledc_channel = LEDC_CHANNEL_0;
+  config.ledc_timer   = LEDC_TIMER_0;
+  config.pin_d0       = Y2_GPIO_NUM;
+  config.pin_d1       = Y3_GPIO_NUM;
+  config.pin_d2       = Y4_GPIO_NUM;
+  config.pin_d3       = Y5_GPIO_NUM;
+  config.pin_d4       = Y6_GPIO_NUM;
+  config.pin_d5       = Y7_GPIO_NUM;
+  config.pin_d6       = Y8_GPIO_NUM;
+  config.pin_d7       = Y9_GPIO_NUM;
+  config.pin_xclk     = XCLK_GPIO_NUM;
+  config.pin_pclk     = PCLK_GPIO_NUM;
+  config.pin_vsync    = VSYNC_GPIO_NUM;
+  config.pin_href     = HREF_GPIO_NUM;
+  config.pin_sccb_sda = SIOD_GPIO_NUM;
+  config.pin_sccb_scl = SIOC_GPIO_NUM;
+  config.pin_pwdn     = PWDN_GPIO_NUM;
+  config.pin_reset    = RESET_GPIO_NUM;
+  config.xclk_freq_hz = 20000000;
+  config.pixel_format = PIXFORMAT_JPEG;
+  config.frame_size   = FRAMESIZE_SVGA;
+  config.jpeg_quality = 12;
+  config.fb_count     = 1;
+  return (esp_camera_init(&config) == ESP_OK);
+}
+
+// ---- Sleep helpers ----
+void holdFlashLowAndEnableDeepSleepHold() {
+  digitalWrite(FLASH_LED_PIN, LOW);
+  gpio_hold_en((gpio_num_t)FLASH_LED_PIN);
+  gpio_deep_sleep_hold_en();
+}
+
+void releaseFlashHoldAfterWake() {
+  gpio_deep_sleep_hold_dis();
+  gpio_hold_dis((gpio_num_t)FLASH_LED_PIN);
+}
+
+// Require the trigger to be LOW before arming wake on HIGH, then sleep.
+void armTriggerAndSleep() {
+  // Ensure the line is LOW so EXT0 won't wake immediately (EXT0 is level-sensitive)
+  while (digitalRead(TRIGGER_PIN) == HIGH) {
+    delay(10);
+  }
+  // Arm wake on HIGH level
+  esp_sleep_enable_ext0_wakeup(GPIO_NUM_15, 1); // 1 = wake when HIGH
+  holdFlashLowAndEnableDeepSleepHold();
+  esp_deep_sleep_start();
+}
+
+void sleepCooldown30sOnlyTimer() {
+  // Ignore GPIO during cooldown; wake on timer only
+  esp_sleep_enable_timer_wakeup(COOLDOWN_US);
+  holdFlashLowAndEnableDeepSleepHold();
+  esp_deep_sleep_start();
+}
+
+void setup() {
+  pinMode(FLASH_LED_PIN, OUTPUT);
+  digitalWrite(FLASH_LED_PIN, LOW);
+  pinMode(TRIGGER_PIN, INPUT_PULLDOWN);  // avoid floating HIGHs
+  Serial.begin(115200);
+  delay(100);
+
+  // We may have held FLASH low during the previous sleep — release so we can drive it now.
+  releaseFlashHoldAfterWake();
+
+  esp_sleep_wakeup_cause_t cause = esp_sleep_get_wakeup_cause();
+
+  if (cause == ESP_SLEEP_WAKEUP_EXT0) {
+    // Woken by GPIO15 HIGH → connect, sync time, init camera, capture+upload, then cooldown
+    Serial.println("Wake: EXT0 (GPIO15 HIGH). Capturing...");
+
+    WiFi.mode(WIFI_STA);
+    WiFi.begin(WIFI_SSID, WIFI_PASS);
+    while (WiFi.status() != WL_CONNECTED) { delay(500); Serial.print("."); }
+    Serial.println("\nWiFi connected");
+
+    configTime(gmtOffset_sec, daylightOffset_s, ntpServer);
+
+    if (!initCamera()) {
+      Serial.println("Camera init failed");
+      // Respect cooldown even on failure to avoid rapid wake-spam
+      sleepCooldown30sOnlyTimer();
+    }
+
+    bool ok = captureAndUpload();
+    if (!ok) Serial.println("Capture/upload failed");
+
+    // Optional: power down camera to reduce leakage current before sleep
+    esp_camera_deinit();
+
+    // Enter cooldown sleep for at least 30 seconds (GPIO15 ignored during this time)
+    Serial.println("Cooldown for 30s...");
+    sleepCooldown30sOnlyTimer();
+  }
+  else if (cause == ESP_SLEEP_WAKEUP_TIMER) {
+    // Cooldown finished → re-arm trigger and sleep until a new HIGH occurs
+    Serial.println("Wake: TIMER (cooldown done). Re-arming trigger...");
+    armTriggerAndSleep();
+  }
+  else {
+    // First boot or other cause → go directly to deep sleep waiting for trigger
+    Serial.println("Boot/other wake. Sleeping until GPIO15 goes HIGH...");
+    armTriggerAndSleep();
+  }
+}
+
+void loop() {
+  // Not used — all logic handled in setup() with deep sleep cycles
+}
