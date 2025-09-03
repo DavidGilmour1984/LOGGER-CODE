@@ -5,7 +5,7 @@
 #include "time.h"
 
 // ==== USER SETTINGS ====
-const char* WIFI_SSID = "DPhone";
+const char* WIFI_SSID = "G2.4";
 const char* WIFI_PASS = "";
 const char* NEOCITIES_API_KEY = "";
 const char* REMOTE_FILENAME = "logs/data.csv";  // Neocities will create nested folders if needed
@@ -19,9 +19,9 @@ const float MAX_ADC_V   = 3.3;   // Voltage span after divider
 
 // Timing
 unsigned long lastSample = 0;
-const unsigned long SAMPLE_MS  = 10000;  // 10 s between samples
+const unsigned long SAMPLE_MS  = 3600000;  // 1 hour between samples
 unsigned long lastUpload = 0;
-const unsigned long UPLOAD_MS  = 20000;  // 20 s between uploads
+const unsigned long UPLOAD_MS  = 3600000;  // 1 hour between uploads
 
 const char* CSV_HEADER = "timestamp,depth_m\n";
 
