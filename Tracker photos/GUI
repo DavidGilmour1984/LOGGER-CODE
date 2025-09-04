@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
-<title>ESP32-CAM Gallery</title>
+<title>Bush Sentinel</title>
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <meta name="theme-color" content="#0e1726" />
 
@@ -47,7 +47,7 @@
 
 <!-- Sidebar controls -->
 <div class="sidebar">
-  <h1>ESP32-CAM Gallery</h1>
+  <h1>Bush Sentinel</h1>
   <div class="actions">
     <button id="downloadZipBtn">Download ZIP</button>
   </div>
