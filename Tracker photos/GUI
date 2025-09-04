@@ -28,8 +28,6 @@
   .actions button:hover, .controls button:hover{background:rgba(255,255,255,0.15)}
   .controls label{font-size:0.8rem;color:var(--muted);margin-bottom:4px;display:block}
   select,input{width:100%}
-  .btnrow{display:flex;flex-wrap:wrap;gap:6px}
-  .btnrow button{flex:1}
   .stat{font-size:0.85rem;color:var(--muted)}
   .main{flex:1;display:grid;grid-template-columns:1fr 220px;gap:20px;padding:20px;overflow:hidden}
   .featured{background:var(--panel);border-radius:16px;display:flex;flex-direction:column;
@@ -43,12 +41,6 @@
   .thumb-card:hover{transform:translateY(-2px)}
   .thumb-card img{width:100%;display:block;aspect-ratio:4/3;object-fit:cover}
   .thumb-meta{padding:6px 8px;font-size:0.75rem;color:var(--muted)}
-  footer{padding:8px;text-align:center;font-size:12px;color:var(--muted)}
-  #jsonModal{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;align-items:center;justify-content:center}
-  #jsonModal.active{display:flex}
-  #jsonModal .modal-card{background:#fff;color:#000;border-radius:12px;max-width:900px;width:92%;
-                         max-height:80vh;overflow:auto;padding:16px}
-  #jsonContent{white-space:pre-wrap;font-size:12px;background:#f9fafb;padding:10px;border-radius:8px}
 </style>
 </head>
 <body>
@@ -57,23 +49,12 @@
 <div class="sidebar">
   <h1>ESP32-CAM Gallery</h1>
   <div class="actions">
-    <button id="playBtn">▶ Slideshow</button>
     <button id="downloadZipBtn">Download ZIP</button>
-    <button id="viewJsonBtn">View JSON</button>
   </div>
 
   <div class="controls">
     <label for="from">From</label><input type="datetime-local" id="from">
     <label for="to">To</label><input type="datetime-local" id="to">
-    <label for="photoSelect">Jump to photo</label>
-    <select id="photoSelect"><option value="">(Select…)</option></select>
-  </div>
-
-  <div class="btnrow">
-    <button data-range="24h">24h</button>
-    <button data-range="7d">7d</button>
-    <button data-range="today">Today</button>
-    <button data-range="all">All</button>
   </div>
 
   <div class="controls">
@@ -93,21 +74,11 @@
   <aside class="thumbs" id="grid"></aside>
 </div>
 
-
-<!-- JSON Modal -->
-<div id="jsonModal"><div class="modal-card">
-  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
-    <h3 style="margin:0;font-size:18px">photos.json</h3>
-    <button id="closeJsonBtn">Close</button>
-  </div>
-  <pre id="jsonContent"></pre>
-</div></div>
-
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
 <script>
-const JSON_FILE="photos.json", IMAGE_PATH="./", SLIDESHOW_MS=3000;
-let all=[],filtered=[],playing=false,slideTimer=null,currentIndex=-1;
+const JSON_FILE="photos.json", IMAGE_PATH="./", POLL_MS=10000;
+let all=[],filtered=[],currentIndex=-1;
 const $=s=>document.querySelector(s);
 
 function pad(n){return String(n).padStart(2,"0");}
@@ -121,22 +92,13 @@ function updateFeatured(i){
   currentIndex=i; const it=filtered[i];
   $("#featured").src=IMAGE_PATH+it.name;
   $("#featMeta").textContent=`${it.name} • ${it.date?it.date.toLocaleString():"unknown"}`;
-  $("#photoSelect").value=it.name;
 }
-function nextSlide(step=1){
-  if(filtered.length===0)return;
-  currentIndex=(currentIndex+step+filtered.length)%filtered.length;
-  updateFeatured(currentIndex);
-}
-function startSlideshow(){if(playing||filtered.length<=1)return;
-  playing=true;$("#playBtn").textContent="⏸ Pause";slideTimer=setInterval(()=>nextSlide(1),SLIDESHOW_MS);}
-function stopSlideshow(){playing=false;$("#playBtn").textContent="▶ Slideshow";clearInterval(slideTimer);}
 function renderGrid(list){
   const g=$("#grid"); g.innerHTML="";
   list.forEach((it,idx)=>{
     const c=document.createElement("div");c.className="thumb-card";
     c.innerHTML=`<img src="${IMAGE_PATH+it.name}" alt="${it.name}"><div class="thumb-meta">${it.name}</div>`;
-    c.onclick=()=>{stopSlideshow();updateFeatured(idx);};
+    c.onclick=()=>{updateFeatured(idx);};
     c.ondblclick=()=>{window.open(IMAGE_PATH+it.name,"_blank");};
     g.appendChild(c);
   });
@@ -144,22 +106,33 @@ function renderGrid(list){
 }
 function applyFilter(){
   const sort=$("#sort").value;
-  filtered=all.filter(x=>x.valid).sort((a,b)=>sort==="new"?b.date-a.date:a.date-b.date);
+  const from=$("#from").value?new Date($("#from").value):null;
+  const to=$("#to").value?new Date($("#to").value):null;
+  filtered=all.filter(x=>{
+    if(!x.valid) return false;
+    if(from && x.date<from) return false;
+    if(to && x.date>to) return false;
+    return true;
+  });
+  filtered.sort((a,b)=>sort==="new"?b.date-a.date:a.date-b.date);
   renderGrid(filtered); if(filtered.length)updateFeatured(0);
   else{$("#featured").src="";$("#featMeta").textContent="No photos";}
 }
+async function fetchPhotos(){
+  try{
+    const res=await fetch(`${JSON_FILE}?t=${Date.now()}`);
+    const names=await res.json();
+    all=names.map(n=>({name:n,date:parseNameToDate(n),valid:!!parseNameToDate(n)}));
+    applyFilter();
+  }catch(e){console.error("Failed to fetch photos",e);}
+}
 async function init(){
-  const res=await fetch(`${JSON_FILE}?t=${Date.now()}`);
-  const names=await res.json();
-  all=names.map(n=>({name:n,date:parseNameToDate(n),valid:!!parseNameToDate(n)}));
-  applyFilter();
-  $("#playBtn").onclick=()=>playing?stopSlideshow():startSlideshow();
+  await fetchPhotos();
   $("#downloadZipBtn").onclick=downloadZip;
-  $("#viewJsonBtn").onclick=()=>{$("#jsonModal").classList.add("active");
-    fetch(JSON_FILE).then(r=>r.json()).then(d=>$("#jsonContent").textContent=JSON.stringify(d,null,2));}
-  $("#closeJsonBtn").onclick=()=>$("#jsonModal").classList.remove("active");
-  document.querySelectorAll(".btnrow button").forEach(b=>b.onclick=()=>applyFilter());
+  $("#from").onchange=applyFilter;
+  $("#to").onchange=applyFilter;
   $("#sort").onchange=applyFilter;
+  setInterval(fetchPhotos,POLL_MS); // auto-refresh feed
 }
 async function downloadZip(){
   if(filtered.length===0)return;
