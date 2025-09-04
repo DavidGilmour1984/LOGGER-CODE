@@ -16,7 +16,7 @@ const uint32_t CAPTURE_MS = 30000;   // 30 s between photos
 
 const char* ntpServer        = "pool.ntp.org";
 const long  gmtOffset_sec    = 12 * 3600;  // NZST
-const int   daylightOffset_s = 3600;       // NZDT
+const int   daylightOffset_s = 0;       // NZDT
 
 #define FLASH_LED_PIN      4
 
