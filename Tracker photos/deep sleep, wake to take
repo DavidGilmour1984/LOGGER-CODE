@@ -5,23 +5,26 @@
 #include "time.h"
 #include "esp_sleep.h"
 #include "driver/gpio.h"
+#include "FS.h"
+#include "LittleFS.h"
 
 // ==== USER SETTINGS ====
-const char* WIFI_SSID = "G2.4";
-const char* WIFI_PASS = "";
+const char* WIFI_SSID = "StPeters-PSK";
+const char* WIFI_PASS = "4OddDevices";
 const char* NEOCITIES_API_KEY = "";
 /**** ESP32-CAM → Neocities JPEG Uploader with JSON Index ****/
 
-const char* REMOTE_DIR = "photos";   // remote folder on site
-const uint32_t CAPTURE_MS = 30000;   // (unused now, preserved)
+const char* REMOTE_DIR = "photos";   
+const char* JSON_PATH  = "/photos.json";  // local flash JSON file
+const uint32_t CAPTURE_MS = 30000;   
 
 const char* ntpServer        = "pool.ntp.org";
-const long  gmtOffset_sec    = 12 * 3600;  // NZST
-const int   daylightOffset_s = 3600;       // NZDT
+const long  gmtOffset_sec    = 12 * 3600;  
+const int   daylightOffset_s = 3600;       
 
 #define FLASH_LED_PIN      4
-#define TRIGGER_PIN       15           // Wake/trigger pin (goes HIGH to capture)
-#define COOLDOWN_US (30ULL * 1000000ULL)  // 30 seconds minimum between photos
+#define TRIGGER_PIN       15           
+#define COOLDOWN_US (30ULL * 1000000ULL)  
 
 // ==== CAMERA PINOUT (AI-Thinker) ====
 #define PWDN_GPIO_NUM     32
@@ -41,7 +44,36 @@ const int   daylightOffset_s = 3600;       // NZDT
 #define HREF_GPIO_NUM     23
 #define PCLK_GPIO_NUM     22
 
-// ==== Helpers ====
+// ==== Filesystem Helpers ====
+bool initFS() {
+  if (!LittleFS.begin(true)) {  // auto-format on fail
+    Serial.println("LittleFS mount failed");
+    return false;
+  }
+  return true;
+}
+
+String loadJSON() {
+  if (!LittleFS.exists(JSON_PATH)) return "[]";
+  File f = LittleFS.open(JSON_PATH, "r");
+  if (!f) return "[]";
+  String content = f.readString();
+  f.close();
+  if (content.length() == 0) return "[]";
+  return content;
+}
+
+void saveJSON(const String& json) {
+  File f = LittleFS.open(JSON_PATH, "w");
+  if (!f) {
+    Serial.println("Failed to open JSON for writing");
+    return;
+  }
+  f.print(json);
+  f.close();
+}
+
+// ==== Misc Helpers ====
 String filenameTimestamp() {
   struct tm ti;
   if (getLocalTime(&ti)) {
@@ -80,6 +112,7 @@ bool uploadMultipart(const String& filename, const uint8_t* data, size_t len, co
   return (code >= 200 && code < 300);
 }
 
+// ==== Capture + Upload ====
 bool captureAndUpload() {
   digitalWrite(FLASH_LED_PIN, HIGH);
   delay(100);
@@ -96,10 +129,14 @@ bool captureAndUpload() {
   esp_camera_fb_return(fb);
   if (!ok) return false;
 
-  // Update JSON index
-  static String json = "[]";
+  // --- JSON handling ---
+  String json = loadJSON();  
   if (json == "[]") json = "[\"" + name + "\"]";
   else json = json.substring(0, json.length()-1) + ",\"" + name + "\"]";
+
+  saveJSON(json);  
+
+  // Upload updated index
   uploadMultipart(String(REMOTE_DIR) + "/photos.json", (uint8_t*)json.c_str(), json.length(), "application/json");
 
   return true;
@@ -145,20 +182,16 @@ void releaseFlashHoldAfterWake() {
   gpio_hold_dis((gpio_num_t)FLASH_LED_PIN);
 }
 
-// Require the trigger to be LOW before arming wake on HIGH, then sleep.
 void armTriggerAndSleep() {
-  // Ensure the line is LOW so EXT0 won't wake immediately (EXT0 is level-sensitive)
   while (digitalRead(TRIGGER_PIN) == HIGH) {
     delay(10);
   }
-  // Arm wake on HIGH level
-  esp_sleep_enable_ext0_wakeup(GPIO_NUM_15, 1); // 1 = wake when HIGH
+  esp_sleep_enable_ext0_wakeup(GPIO_NUM_15, 1); 
   holdFlashLowAndEnableDeepSleepHold();
   esp_deep_sleep_start();
 }
 
 void sleepCooldown30sOnlyTimer() {
-  // Ignore GPIO during cooldown; wake on timer only
   esp_sleep_enable_timer_wakeup(COOLDOWN_US);
   holdFlashLowAndEnableDeepSleepHold();
   esp_deep_sleep_start();
@@ -167,17 +200,16 @@ void sleepCooldown30sOnlyTimer() {
 void setup() {
   pinMode(FLASH_LED_PIN, OUTPUT);
   digitalWrite(FLASH_LED_PIN, LOW);
-  pinMode(TRIGGER_PIN, INPUT_PULLDOWN);  // avoid floating HIGHs
+  pinMode(TRIGGER_PIN, INPUT_PULLDOWN);  
   Serial.begin(115200);
   delay(100);
 
-  // We may have held FLASH low during the previous sleep — release so we can drive it now.
   releaseFlashHoldAfterWake();
+  initFS();   // <<< mount filesystem for JSON persistence
 
   esp_sleep_wakeup_cause_t cause = esp_sleep_get_wakeup_cause();
 
   if (cause == ESP_SLEEP_WAKEUP_EXT0) {
-    // Woken by GPIO15 HIGH → connect, sync time, init camera, capture+upload, then cooldown
     Serial.println("Wake: EXT0 (GPIO15 HIGH). Capturing...");
 
     WiFi.mode(WIFI_STA);
@@ -189,32 +221,25 @@ void setup() {
 
     if (!initCamera()) {
       Serial.println("Camera init failed");
-      // Respect cooldown even on failure to avoid rapid wake-spam
       sleepCooldown30sOnlyTimer();
     }
 
     bool ok = captureAndUpload();
     if (!ok) Serial.println("Capture/upload failed");
 
-    // Optional: power down camera to reduce leakage current before sleep
     esp_camera_deinit();
 
-    // Enter cooldown sleep for at least 30 seconds (GPIO15 ignored during this time)
     Serial.println("Cooldown for 30s...");
     sleepCooldown30sOnlyTimer();
   }
   else if (cause == ESP_SLEEP_WAKEUP_TIMER) {
-    // Cooldown finished → re-arm trigger and sleep until a new HIGH occurs
     Serial.println("Wake: TIMER (cooldown done). Re-arming trigger...");
     armTriggerAndSleep();
   }
   else {
-    // First boot or other cause → go directly to deep sleep waiting for trigger
     Serial.println("Boot/other wake. Sleeping until GPIO15 goes HIGH...");
     armTriggerAndSleep();
   }
 }
 
-void loop() {
-  // Not used — all logic handled in setup() with deep sleep cycles
-}
+void loop() {}
