@@ -1,143 +1,173 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <title>ESP32-CAM Gallery</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <!-- JSZip + FileSaver -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js" crossorigin="anonymous"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js" crossorigin="anonymous"></script>
-  <style>
-    :root{
-      --bg:#f7f8fb; --card:#fff; --text:#111;
-      --muted:#6b7280; --accent:#2563eb; --accent2:#10b981;
-      --shadow:0 8px 24px rgba(0,0,0,.08);
-      --radius:16px;
-      --barH: 50px; --menuMaxH: 600px;
-    }
-    *{box-sizing:border-box}
-    body{margin:0;font-family:Helvetica,Arial,sans-serif;color:var(--text);background:linear-gradient(180deg,#fbfbfc,#f2f5fb 60%,#edf2ff);}
-    header{position:sticky;top:0;z-index:10;background:rgba(255,255,255,.85);backdrop-filter:blur(8px);border-bottom:1px solid #e5e7eb;}
-    .bar{height:var(--barH);display:flex;align-items:center;justify-content:space-between;gap:10px;padding:0 14px;}
-    .title{font-size:16px;font-weight:600;letter-spacing:.2px}
-    .hint{color:var(--muted);font-size:12px}
-    .bar .actions{display:flex;gap:8px;align-items:center}
-    .chip{font-size:12px;color:#1e3a8a;background:#eef2ff;padding:6px 10px;border-radius:999px}
-    .chip:hover{filter:brightness(.95)}
-    .menu-wrap{overflow:hidden;max-height:0;transition:max-height .3s ease;border-top:1px solid #eef2ff;}
-    header:hover .menu-wrap{max-height:var(--menuMaxH);}
-    .wrap{max-width:1200px;margin:0 auto;padding:0 16px;}
-    .menu-inner{padding:14px 0 16px;}
-    .controls{display:grid;gap:10px;align-items:end;margin:6px 0;grid-template-columns:repeat(auto-fit,minmax(220px,1fr))}
-    label{font-size:12px;color:var(--muted);display:block;margin:0 0 6px}
-    input,select,button{width:100%;padding:10px 12px;border-radius:10px;border:1px solid #d1d5db;background:#fff;font-size:14px;color:var(--text);}
-    .btnrow{display:flex;gap:8px;flex-wrap:wrap}
-    .btn{cursor:pointer;padding:10px 12px;border:none;border-radius:10px;background:#eef2ff;color:#1e40af}
-    .btn.secondary{background:#ecfeff;color:#0e7490}
-    .btn.green{background:#ecfdf5;color:#065f46}
-    .btn.gray{background:#f3f4f6;color:#374151}
-    .btn:active{transform:translateY(1px)}
-    main.wrap{padding:16px}
-    .featured{background:var(--card);border-radius:var(--radius);box-shadow:var(--shadow);padding:14px;margin:10px 0 18px;}
-    .feat-top{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
-    .feat-meta{font-size:14px;color:var(--muted)}
-    .feat-actions{display:flex;gap:8px;flex-wrap:wrap}
-    .feat-img{margin-top:10px;display:flex;justify-content:center;align-items:center;background:#111;border-radius:12px;overflow:hidden;max-height:70vh;}
-    .feat-img img{max-width:100%;height:auto;width:auto;object-fit:contain}
-    #grid{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(180px,1fr))}
-    .card{background:var(--card);border-radius:14px;overflow:hidden;box-shadow:var(--shadow);transition:transform .08s ease;}
-    .card:hover{transform:translateY(-2px)}
-    .thumb{aspect-ratio:4/3;background:#111;display:block}
-    .thumb img{width:100%;height:100%;object-fit:cover;display:block}
-    .meta{padding:8px 10px;font-size:12px;color:#374151;display:flex;justify-content:space-between;gap:8px}
-    .filename{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:70%}
-    .time{color:var(--muted)}
-    footer{padding:24px 16px;text-align:center;color:#9ca3af;font-size:12px}
-  </style>
+<meta charset="UTF-8" />
+<title>ESP32-CAM Gallery</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="theme-color" content="#0e1726" />
+
+<style>
+  :root {
+    --bg:#0e1726; --panel:rgba(255,255,255,0.05); --ink:#f5f9ff;
+    --muted:#b0c4de; --accent1:#00e5ff; --accent2:#4facfe;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 Helvetica,Arial,sans-serif;
+       display:flex;height:100vh}
+  .sidebar{
+    width:320px;flex-shrink:0;padding:20px;overflow-y:auto;
+    background:var(--panel);backdrop-filter:blur(12px);
+    border-right:1px solid rgba(255,255,255,0.1);
+    display:flex;flex-direction:column;gap:18px
+  }
+  h1{margin:0;font-size:1.4rem;font-weight:600}
+  .actions button, .controls button, select, input{
+    background:rgba(255,255,255,0.07);color:var(--ink);border:none;
+    padding:10px 14px;border-radius:10px;font-size:0.9rem;cursor:pointer;width:100%
+  }
+  .actions button:hover, .controls button:hover{background:rgba(255,255,255,0.15)}
+  .controls label{font-size:0.8rem;color:var(--muted);margin-bottom:4px;display:block}
+  select,input{width:100%}
+  .btnrow{display:flex;flex-wrap:wrap;gap:6px}
+  .btnrow button{flex:1}
+  .stat{font-size:0.85rem;color:var(--muted)}
+  .main{flex:1;display:grid;grid-template-columns:1fr 220px;gap:20px;padding:20px;overflow:hidden}
+  .featured{background:var(--panel);border-radius:16px;display:flex;flex-direction:column;
+            box-shadow:0 10px 28px rgba(0,0,0,.35);padding:16px;overflow:auto}
+  .feat-meta{font-size:0.9rem;color:var(--muted);margin-bottom:10px}
+  .feat-img{flex:1;background:#000;border-radius:12px;display:flex;align-items:center;justify-content:center}
+  .feat-img img{max-width:100%;max-height:100%;object-fit:contain}
+  .thumbs{overflow-y:auto}
+  .thumb-card{background:var(--panel);border-radius:10px;margin-bottom:12px;cursor:pointer;
+              transition:transform .1s;box-shadow:0 6px 14px rgba(0,0,0,.25)}
+  .thumb-card:hover{transform:translateY(-2px)}
+  .thumb-card img{width:100%;display:block;aspect-ratio:4/3;object-fit:cover}
+  .thumb-meta{padding:6px 8px;font-size:0.75rem;color:var(--muted)}
+  footer{padding:8px;text-align:center;font-size:12px;color:var(--muted)}
+  #jsonModal{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;align-items:center;justify-content:center}
+  #jsonModal.active{display:flex}
+  #jsonModal .modal-card{background:#fff;color:#000;border-radius:12px;max-width:900px;width:92%;
+                         max-height:80vh;overflow:auto;padding:16px}
+  #jsonContent{white-space:pre-wrap;font-size:12px;background:#f9fafb;padding:10px;border-radius:8px}
+</style>
 </head>
 <body>
-  <header>
-    <div class="wrap bar">
-      <div class="title">ESP32-CAM Gallery</div>
-      <div class="actions">
-        <span class="hint">hover to expand menu</span>
-        <button class="chip small" id="playBtn">▶ Slideshow</button>
-        <button class="chip small" id="downloadZipBtn" title="Download filtered photos">Download ZIP</button>
-      </div>
-    </div>
-    <div class="menu-wrap">
-      <div class="wrap menu-inner">
-        <div class="controls" id="controls">
-          <div><label for="from">From</label><input type="datetime-local" id="from"/></div>
-          <div><label for="to">To</label><input type="datetime-local" id="to"/></div>
-          <div><label for="photoSelect">Jump</label>
-            <select id="photoSelect"><option value="">(Select…)</option></select>
-          </div>
-          <div><label>Quick ranges</label>
-            <div class="btnrow">
-              <button class="btn" data-range="24h">Last 24h</button>
-              <button class="btn" data-range="7d">Last 7d</button>
-              <button class="btn" data-range="today">Today</button>
-              <button class="btn gray" data-range="all">All</button>
-            </div>
-          </div>
-        </div>
-        <div class="row" style="margin-top:8px">
-          <div class="stat" id="countStat">0 photos</div>
-          <div style="display:flex;gap:8px;align-items:center">
-            <label for="sort" style="margin:0;font-size:12px;color:var(--muted)">Sort</label>
-            <select id="sort">
-              <option value="new">Newest first</option>
-              <option value="old">Oldest first</option>
-            </select>
-          </div>
-        </div>
-      </div>
-    </div>
-  </header>
 
-  <main class="wrap">
-    <section class="featured">
-      <div class="feat-top">
-        <div class="feat-meta" id="featMeta">—</div>
-        <div class="feat-actions">
-          <button class="btn secondary" id="copyUrlBtn">Copy URL</button>
-          <button class="btn gray" id="openRawBtn">Open Full Size</button>
-        </div>
-      </div>
-      <div class="feat-img"><img id="featured" alt="Selected photo"/></div>
-    </section>
-    <section id="grid"></section>
-  </main>
+<!-- Sidebar controls -->
+<div class="sidebar">
+  <h1>ESP32-CAM Gallery</h1>
+  <div class="actions">
+    <button id="playBtn">▶ Slideshow</button>
+    <button id="downloadZipBtn">Download ZIP</button>
+    <button id="viewJsonBtn">View JSON</button>
+  </div>
 
-  <footer>Reads <code>photos.json</code> and shows photos. Menu expands on hover.</footer>
+  <div class="controls">
+    <label for="from">From</label><input type="datetime-local" id="from">
+    <label for="to">To</label><input type="datetime-local" id="to">
+    <label for="photoSelect">Jump to photo</label>
+    <select id="photoSelect"><option value="">(Select…)</option></select>
+  </div>
 
-  <script>
-    const JSON_FILE="photos.json", IMAGE_PATH="./", SLIDESHOW_MS=3000;
-    let all=[],filtered=[],currentIndex=-1,playing=false,slideTimer=null;
-    const $=s=>document.querySelector(s),$$=s=>document.querySelectorAll(s);
+  <div class="btnrow">
+    <button data-range="24h">24h</button>
+    <button data-range="7d">7d</button>
+    <button data-range="today">Today</button>
+    <button data-range="all">All</button>
+  </div>
 
-    function pad(n){return String(n).padStart(2,"0");}
-    function dateToInputValue(d){return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;}
-    function parseFromInputValue(v){if(!v)return null;const[Y,M,D]=v.split("T")[0].split("-").map(Number);const[h,m]=v.split("T")[1].split(":").map(Number);return new Date(Y,M-1,D,h,m);}
-    function parseNameToDate(name){const m=name.match(/^(\d{4})(\d{2})(\d{2})[_-](\d{2})(\d{2})(\d{2})\.(?:jpg|jpeg)$/i);if(!m)return null;return new Date(+m[1],+m[2]-1,+m[3],+m[4],+m[5],+m[6]);}
+  <div class="controls">
+    <label for="sort">Sort</label>
+    <select id="sort"><option value="new">Newest first</option><option value="old">Oldest first</option></select>
+  </div>
 
-    function updateFeatured(i){if(i<0||i>=filtered.length)return;currentIndex=i;const item=filtered[i];$("#featured").src=IMAGE_PATH+item.name;$("#featMeta").textContent=`${item.name} • ${item.date?item.date.toLocaleString():"?"}`;$("#photoSelect").value=item.name;}
-    function nextSlide(step=1){if(filtered.length===0)return;currentIndex=(currentIndex+step+filtered.length)%filtered.length;updateFeatured(currentIndex);}
-    function startSlideshow(){if(playing||filtered.length<=1)return;playing=true;$("#playBtn").textContent="⏸ Pause";slideTimer=setInterval(()=>nextSlide(1),SLIDESHOW_MS);}
-    function stopSlideshow(){playing=false;$("#playBtn").textContent="▶ Slideshow";if(slideTimer)clearInterval(slideTimer);}
-    function rebuildDropdown(list){const sel=$("#photoSelect");sel.innerHTML="<option value=''>Select…</option>";list.forEach(it=>{const o=document.createElement("option");o.value=it.name;o.textContent=it.name;sel.appendChild(o);});}
-    function renderGrid(list){const g=$("#grid");g.innerHTML="";list.forEach((it,idx)=>{const c=document.createElement("div");c.className="card";c.innerHTML=`<a class="thumb" href="${IMAGE_PATH+it.name}" target="_blank"><img loading="lazy" src="${IMAGE_PATH+it.name}"></a><div class="meta"><div class="filename">${it.name}</div><div class="time">${it.date?it.date.toLocaleTimeString():""}</div></div>`;c.querySelector(".thumb").addEventListener("click",e=>{e.preventDefault();stopSlideshow();updateFeatured(idx);window.scrollTo({top:0,behavior:"smooth"});});g.appendChild(c);});$("#countStat").textContent=`${list.length} photo${list.length==1?"":"s"}`;}
-    function applyFilter(){const sort=$("#sort").value,from=parseFromInputValue($("#from").value),to=parseFromInputValue($("#to").value);filtered=all.filter(x=>x.valid&&(!from||x.date>=from)&&(!to||x.date<=to));filtered.sort((a,b)=>sort==="new"?b.date-a.date:a.date-b.date);rebuildDropdown(filtered);renderGrid(filtered);if(filtered.length>0)updateFeatured(0);}
-    function setQuickRange(tag){const now=new Date();let f=null,t=null;if(tag==="24h"){f=new Date(now-24*3600*1000);t=now;}else if(tag==="7d"){f=new Date(now-7*24*3600*1000);t=now;}else if(tag==="today"){f=new Date(now.getFullYear(),now.getMonth(),now.getDate());t=now;}$("#from").value=f?dateToInputValue(f):"";$("#to").value=t?dateToInputValue(t):"";applyFilter();}
+  <div id="countStat" class="stat">0 photos</div>
+</div>
 
-    async function downloadZip(){if(filtered.length===0){alert("No photos in range");return;}const btn=$("#downloadZipBtn");btn.disabled=true;btn.textContent="Preparing…";const zip=new JSZip();const folder=zip.folder("photos");for(const item of filtered){try{const r=await fetch(IMAGE_PATH+item.name);const b=await r.blob();folder.file(item.name,b);}catch(e){console.error("Fetch fail",item.name,e);}}zip.generateAsync({type:"blob"}).then(content=>{saveAs(content,makeZipName());btn.disabled=false;btn.textContent="Download ZIP";});}
-    function makeZipName(){const f=parseFromInputValue($("#from").value),t=parseFromInputValue($("#to").value);const fmt=d=>d?`${d.getFullYear()}${pad(d.getMonth()+1)}${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}`:"all";return `photos_${fmt(f)}-${fmt(t)}.zip`;}
+<!-- Main area -->
+<div class="main">
+  <section class="featured">
+    <div class="feat-meta" id="featMeta">—</div>
+    <div class="feat-img"><img id="featured" alt="Selected photo"></div>
+  </section>
+  <aside class="thumbs" id="grid"></aside>
+</div>
 
-    function copyCurrentUrl(){const cur=filtered[currentIndex];if(!cur)return;const url=location.href.replace(/\/index\.html?$/i,"").replace(/\/$/,"")+"/"+cur.name;navigator.clipboard.writeText(url).then(()=>{$("#copyUrlBtn").textContent="Copied!";setTimeout(()=>$("#copyUrlBtn").textContent="Copy URL",900);});}
 
-    async function init(){const res=await fetch(`${JSON_FILE}?t=${Date.now()}`);const names=await res.json();all=names.map(n=>({name:n,date:parseNameToDate(n),valid:!!parseNameToDate(n)}));const dates=all.filter(x=>x.valid).map(x=>x.date).sort((a,b)=>a-b);if(dates.length){$("#from").min=dateToInputValue(dates[0]);$("#to").max=dateToInputValue(dates.at(-1));$("#to").value=dateToInputValue(dates.at(-1));$("#from").value=dateToInputValue(new Date(dates.at(-1)-24*3600*1000));}applyFilter();$("#from").addEventListener("change",applyFilter);$("#to").addEventListener("change",applyFilter);$("#sort").addEventListener("change",applyFilter);$$(".btnrow .btn").forEach(b=>b.addEventListener("click",()=>setQuickRange(b.dataset.range)));$("#photoSelect").addEventListener("change",e=>{const idx=filtered.findIndex(x=>x.name===e.target.value);if(idx>=0){stopSlideshow();updateFeatured(idx);window.scrollTo({top:0,behavior:"smooth"});}});$("#playBtn").addEventListener("click",()=>playing?stopSlideshow():startSlideshow());$("#downloadZipBtn").addEventListener("click",downloadZip);$("#copyUrlBtn").addEventListener("click",copyCurrentUrl);$("#openRawBtn").addEventListener("click",()=>{const cur=filtered[currentIndex];if(cur)window.open(IMAGE_PATH+cur.name,"_blank");});window.addEventListener("keydown",e=>{if(filtered.length===0)return;if(e.key==="ArrowRight"){stopSlideshow();nextSlide(1);}if(e.key==="ArrowLeft"){stopSlideshow();nextSlide(-1);}if(e.key===" "){e.preventDefault();playing?stopSlideshow():startSlideshow();}});}
-    init();
-  </script>
+<!-- JSON Modal -->
+<div id="jsonModal"><div class="modal-card">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+    <h3 style="margin:0;font-size:18px">photos.json</h3>
+    <button id="closeJsonBtn">Close</button>
+  </div>
+  <pre id="jsonContent"></pre>
+</div></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
+<script>
+const JSON_FILE="photos.json", IMAGE_PATH="./", SLIDESHOW_MS=3000;
+let all=[],filtered=[],playing=false,slideTimer=null,currentIndex=-1;
+const $=s=>document.querySelector(s);
+
+function pad(n){return String(n).padStart(2,"0");}
+function parseNameToDate(name){
+  const m=name.match(/^(\d{4})(\d{2})(\d{2})[_-](\d{2})(\d{2})(\d{2})\.(?:jpg|jpeg)$/i);
+  if(!m) return null; const [_,Y,Mo,D,h,mi,s]=m.map(Number);
+  return new Date(Y,Mo-1,D,h,mi,s);
+}
+function updateFeatured(i){
+  if(i<0||i>=filtered.length)return;
+  currentIndex=i; const it=filtered[i];
+  $("#featured").src=IMAGE_PATH+it.name;
+  $("#featMeta").textContent=`${it.name} • ${it.date?it.date.toLocaleString():"unknown"}`;
+  $("#photoSelect").value=it.name;
+}
+function nextSlide(step=1){
+  if(filtered.length===0)return;
+  currentIndex=(currentIndex+step+filtered.length)%filtered.length;
+  updateFeatured(currentIndex);
+}
+function startSlideshow(){if(playing||filtered.length<=1)return;
+  playing=true;$("#playBtn").textContent="⏸ Pause";slideTimer=setInterval(()=>nextSlide(1),SLIDESHOW_MS);}
+function stopSlideshow(){playing=false;$("#playBtn").textContent="▶ Slideshow";clearInterval(slideTimer);}
+function renderGrid(list){
+  const g=$("#grid"); g.innerHTML="";
+  list.forEach((it,idx)=>{
+    const c=document.createElement("div");c.className="thumb-card";
+    c.innerHTML=`<img src="${IMAGE_PATH+it.name}" alt="${it.name}"><div class="thumb-meta">${it.name}</div>`;
+    c.onclick=()=>{stopSlideshow();updateFeatured(idx);};
+    c.ondblclick=()=>{window.open(IMAGE_PATH+it.name,"_blank");};
+    g.appendChild(c);
+  });
+  $("#countStat").textContent=`${list.length} photo${list.length!==1?"s":""}`;
+}
+function applyFilter(){
+  const sort=$("#sort").value;
+  filtered=all.filter(x=>x.valid).sort((a,b)=>sort==="new"?b.date-a.date:a.date-b.date);
+  renderGrid(filtered); if(filtered.length)updateFeatured(0);
+  else{$("#featured").src="";$("#featMeta").textContent="No photos";}
+}
+async function init(){
+  const res=await fetch(`${JSON_FILE}?t=${Date.now()}`);
+  const names=await res.json();
+  all=names.map(n=>({name:n,date:parseNameToDate(n),valid:!!parseNameToDate(n)}));
+  applyFilter();
+  $("#playBtn").onclick=()=>playing?stopSlideshow():startSlideshow();
+  $("#downloadZipBtn").onclick=downloadZip;
+  $("#viewJsonBtn").onclick=()=>{$("#jsonModal").classList.add("active");
+    fetch(JSON_FILE).then(r=>r.json()).then(d=>$("#jsonContent").textContent=JSON.stringify(d,null,2));}
+  $("#closeJsonBtn").onclick=()=>$("#jsonModal").classList.remove("active");
+  document.querySelectorAll(".btnrow button").forEach(b=>b.onclick=()=>applyFilter());
+  $("#sort").onchange=applyFilter;
+}
+async function downloadZip(){
+  if(filtered.length===0)return;
+  const zip=new JSZip();const f=zip.folder("photos");
+  for(const it of filtered){const r=await fetch(IMAGE_PATH+it.name);f.file(it.name,await r.blob());}
+  saveAs(await zip.generateAsync({type:"blob"}),"photos.zip");
+}
+init();
+</script>
 </body>
 </html>
