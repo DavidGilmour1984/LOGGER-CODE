@@ -2,77 +2,114 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
-<title>Bush Sentinel</title>
+<title>ESP32-CAM Gallery</title>
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <meta name="theme-color" content="#0e1726" />
 
 <style>
   :root {
-    --bg:#0e1726; --panel:rgba(255,255,255,0.05); --ink:#f5f9ff;
-    --muted:#b0c4de; --accent1:#00e5ff; --accent2:#4facfe;
+    --bg:#0e1726; --panel:rgba(255,255,255,0.08); --ink:#f5f9ff;
+    --muted:#b0c4de; --accent1:#00e5ff; --accent2:#4facfe; --danger:#ff6b6b;
   }
   *{box-sizing:border-box}
-  body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 Helvetica,Arial,sans-serif;
-       display:flex;height:100vh}
-  .sidebar{
-    width:320px;flex-shrink:0;padding:20px;overflow-y:auto;
-    background:var(--panel);backdrop-filter:blur(12px);
-    border-right:1px solid rgba(255,255,255,0.1);
-    display:flex;flex-direction:column;gap:18px
+  body{margin:0;background:var(--bg);color:var(--ink);font:20px/1.6 Helvetica,Arial,sans-serif;}
+  h1{margin:0 0 20px;font-size:2rem;text-align:center}
+
+  /* Controls container card */
+  .controls-card{
+    margin:16px auto;padding:20px;background:var(--panel);backdrop-filter:blur(8px);
+    border-radius:16px;max-width:900px;box-shadow:0 10px 28px rgba(0,0,0,.35);
   }
-  h1{margin:0;font-size:1.4rem;font-weight:600}
-  .actions button, .controls button, select, input{
+
+  /* Menu toggle styled like other buttons */
+  .menu-toggle{
+    width:100%;padding:14px;margin-bottom:12px;font-size:1rem;font-weight:600;
+    border:none;border-radius:12px;background:var(--accent1);color:#000;cursor:pointer
+  }
+  .menu-toggle:hover{filter:brightness(1.15)}
+
+  /* Panel hidden by default */
+  .controls-panel{display:none;flex-wrap:wrap;gap:12px;justify-content:center}
+  .controls-panel.open{display:flex;flex-direction:column;gap:18px}
+
+  .row{display:flex;gap:12px;justify-content:center}
+  .row > div{flex:1}
+  .controls-panel label{font-size:0.9rem;color:var(--muted);display:block;margin-bottom:4px}
+  .controls-panel input, .controls-panel select, .controls-panel button{
     background:rgba(255,255,255,0.07);color:var(--ink);border:none;
-    padding:10px 14px;border-radius:10px;font-size:0.9rem;cursor:pointer;width:100%
+    padding:10px 14px;border-radius:10px;font-size:0.9rem;width:100%
   }
-  .actions button:hover, .controls button:hover{background:rgba(255,255,255,0.15)}
-  .controls label{font-size:0.8rem;color:var(--muted);margin-bottom:4px;display:block}
-  select,input{width:100%}
-  .stat{font-size:0.85rem;color:var(--muted)}
-  .main{flex:1;display:grid;grid-template-columns:1fr 220px;gap:20px;padding:20px;overflow:hidden}
-  .featured{background:var(--panel);border-radius:16px;display:flex;flex-direction:column;
-            box-shadow:0 10px 28px rgba(0,0,0,.35);padding:16px;overflow:auto}
-  .feat-meta{font-size:0.9rem;color:var(--muted);margin-bottom:10px}
-  .feat-img{flex:1;background:#000;border-radius:12px;display:flex;align-items:center;justify-content:center}
-  .feat-img img{max-width:100%;max-height:100%;object-fit:contain}
-  .thumbs{overflow-y:auto}
-  .thumb-card{background:var(--panel);border-radius:10px;margin-bottom:12px;cursor:pointer;
-              transition:transform .1s;box-shadow:0 6px 14px rgba(0,0,0,.25)}
+  .controls-panel button{cursor:pointer}
+  .controls-panel button:hover{background:rgba(255,255,255,0.15)}
+
+  /* Narrower From/To */
+  .date-range input{width:80%}
+
+  /* Export aligned right */
+  .export-row{display:flex;justify-content:flex-end}
+
+  /* Featured image */
+  .featured{
+    margin:16px;padding:12px;background:var(--panel);border-radius:16px;
+    box-shadow:0 10px 28px rgba(0,0,0,.35);
+  }
+  .feat-meta{font-size:1rem;color:var(--muted);margin-bottom:10px;text-align:center}
+  .feat-img{background:#000;border-radius:12px;display:flex;align-items:center;justify-content:center;max-height:60vh;overflow:hidden}
+  .feat-img img{max-width:100%;max-height:60vh;object-fit:contain}
+
+  /* Thumbnails grid */
+  .thumbs{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:12px;padding:16px}
+  .thumb-card{background:var(--panel);border-radius:12px;cursor:pointer;
+              transition:transform .1s;box-shadow:0 6px 14px rgba(0,0,0,.25);overflow:hidden}
   .thumb-card:hover{transform:translateY(-2px)}
   .thumb-card img{width:100%;display:block;aspect-ratio:4/3;object-fit:cover}
-  .thumb-meta{padding:6px 8px;font-size:0.75rem;color:var(--muted)}
+  .thumb-meta{padding:6px;font-size:0.8rem;color:var(--muted);text-align:center}
+
+  .stat{text-align:center;font-size:1rem;color:var(--muted);margin:10px}
 </style>
 </head>
 <body>
 
-<!-- Sidebar controls -->
-<div class="sidebar">
-  <h1>Bush Sentinel</h1>
-  <div class="actions">
-    <button id="downloadZipBtn">Download ZIP</button>
-  </div>
+<h1>Bush Sentinel</h1>
 
-  <div class="controls">
-    <label for="from">From</label><input type="datetime-local" id="from">
-    <label for="to">To</label><input type="datetime-local" id="to">
+<!-- Controls card -->
+<div class="controls-card">
+  <button class="menu-toggle" onclick="toggleMenu()">☰ Menu</button>
+  <div class="controls-panel" id="controls">
+    <div class="row date-range">
+      <div>
+        <label for="from">From</label>
+        <input type="datetime-local" id="from">
+      </div>
+      <div>
+        <label for="to">To</label>
+        <input type="datetime-local" id="to">
+      </div>
+    </div>
+    <div class="row">
+      <div>
+        <label for="sort">Sort</label>
+        <select id="sort">
+          <option value="new">Newest first</option>
+          <option value="old">Oldest first</option>
+        </select>
+      </div>
+    </div>
+    <div class="export-row">
+      <button id="downloadZipBtn">Export Images</button>
+    </div>
   </div>
-
-  <div class="controls">
-    <label for="sort">Sort</label>
-    <select id="sort"><option value="new">Newest first</option><option value="old">Oldest first</option></select>
-  </div>
-
-  <div id="countStat" class="stat">0 photos</div>
 </div>
 
-<!-- Main area -->
-<div class="main">
-  <section class="featured">
-    <div class="feat-meta" id="featMeta">—</div>
-    <div class="feat-img"><img id="featured" alt="Selected photo"></div>
-  </section>
-  <aside class="thumbs" id="grid"></aside>
-</div>
+<!-- Featured image -->
+<section class="featured">
+  <div class="feat-meta" id="featMeta">—</div>
+  <div class="feat-img"><img id="featured" alt="Selected photo"></div>
+</section>
+
+<!-- Thumbnails -->
+<div class="stat" id="countStat">0 photos</div>
+<aside class="thumbs" id="grid"></aside>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
@@ -81,7 +118,10 @@ const JSON_FILE="photos.json", IMAGE_PATH="./", POLL_MS=10000;
 let all=[],filtered=[],currentIndex=-1;
 const $=s=>document.querySelector(s);
 
-function pad(n){return String(n).padStart(2,"0");}
+function toggleMenu(){
+  $("#controls").classList.toggle("open");
+}
+
 function parseNameToDate(name){
   const m=name.match(/^(\d{4})(\d{2})(\d{2})[_-](\d{2})(\d{2})(\d{2})\.(?:jpg|jpeg)$/i);
   if(!m) return null; const [_,Y,Mo,D,h,mi,s]=m.map(Number);
@@ -132,7 +172,7 @@ async function init(){
   $("#from").onchange=applyFilter;
   $("#to").onchange=applyFilter;
   $("#sort").onchange=applyFilter;
-  setInterval(fetchPhotos,POLL_MS); // auto-refresh feed
+  setInterval(fetchPhotos,POLL_MS);
 }
 async function downloadZip(){
   if(filtered.length===0)return;
