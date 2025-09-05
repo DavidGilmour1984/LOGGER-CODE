@@ -11,7 +11,7 @@ href='data:image/svg+xml;utf8,
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
   <defs>
     <linearGradient id="g" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="%2300e5ff"/>5
+      <stop offset="0" stop-color="%2300e5ff"/>
       <stop offset="1" stop-color="%234facfe"/>
     </linearGradient>
   </defs>
@@ -119,8 +119,13 @@ async function poll(){
     const rows=(await res.text()).trim().split('\n').slice(1);
     allData=rows.map(r=>{
       const[ts,depth,temp]=r.split(',');
-      return{ts:new Date(ts.replace(' ','T')),depth:+depth,temp:+temp};
-    });
+      return {
+        ts:new Date(ts.replace(' ','T')),
+        depth:(isNaN(+depth)?null:+depth),
+        temp:(isNaN(+temp)?null:+temp)
+      };
+    }).filter(d=>d.depth!==null || d.temp!==null); // keep if at least one is valid
+
     applyFilter();
     document.getElementById('connBadge').textContent="Live";
     document.getElementById('connBadge').className="badge ok";
@@ -132,14 +137,17 @@ async function poll(){
 }
 
 function applyFilter(){
-  chart.data.datasets[0].data=allData.map(d=>({x:d.ts,y:d.depth}));
-  chart.data.datasets[1].data=allData.map(d=>({x:d.ts,y:d.temp}));
+  chart.data.datasets[0].data=allData.filter(d=>d.depth!==null).map(d=>({x:d.ts,y:d.depth}));
+  chart.data.datasets[1].data=allData.filter(d=>d.temp!==null).map(d=>({x:d.ts,y:d.temp}));
   chart.update();
 
   const tbody=document.getElementById('tbody');
   tbody.innerHTML='';
   allData.slice().reverse().forEach(d=>{
-    tbody.insertAdjacentHTML('beforeend',`<tr><td>${d.ts.toLocaleString()}</td><td>${d.depth.toFixed(2)}</td><td>${d.temp.toFixed(2)}</td></tr>`);
+    tbody.insertAdjacentHTML('beforeend',
+      `<tr><td>${d.ts.toLocaleString()}</td>
+           <td>${d.depth!==null ? d.depth.toFixed(2) : '–'}</td>
+           <td>${d.temp!==null ? d.temp.toFixed(2) : '–'}</td></tr>`);
   });
 }
 
