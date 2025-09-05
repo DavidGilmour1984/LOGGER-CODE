@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<title>Water Tank Depth Monitor</title>
+<title>Tank Logger</title>
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <meta name="theme-color" content="#0e1726" />
 
@@ -32,32 +32,30 @@ href='data:image/svg+xml;utf8,
   *{box-sizing:border-box}
   body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 Helvetica,Arial,sans-serif}
   .wrap{max-width:1300px;margin:auto;padding:20px}
-  header{display:flex;justify-content:space-between;align-items:center;margin-bottom:24px}
+  header{display:flex;justify-content:space-between;align-items:center;margin-bottom:24px;flex-wrap:wrap;gap:10px}
   .brand{display:flex;align-items:center;gap:10px}
   .logo{width:28px;height:28px;border-radius:50%;background:linear-gradient(135deg,var(--accent1),var(--accent2));
         display:flex;align-items:center;justify-content:center;color:#fff;font-weight:bold;font-size:18px;
         box-shadow:0 0 12px var(--accent1)}
   h1{margin:0;font-size:1.5rem;font-weight:600;letter-spacing:-0.5px}
-  .status{display:flex;gap:10px;align-items:center}
-  .badge{border:1px solid var(--muted);padding:4px 10px;border-radius:20px;color:var(--muted);font-size:0.85rem}
+  .status{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+  .badge{border:1px solid var(--muted);padding:4px 10px;border-radius:20px;color:var(--muted);font-size:0.85rem;text-decoration:none;cursor:pointer;background:none}
   .badge.ok{border-color:var(--good);color:var(--good)}
   .badge.err{border-color:var(--bad);color:var(--bad)}
 
   .card{background:var(--panel);border-radius:16px;backdrop-filter:blur(12px);
         border:1px solid rgba(255,255,255,0.08);box-shadow:0 10px 28px rgba(0,0,0,.35)}
   .pad{padding:18px}
-  .controls{display:flex;flex-wrap:wrap;gap:14px;align-items:center;margin-bottom:14px}
-
   .shell{display:grid;grid-template-columns:1fr 420px;gap:20px}
   @media (max-width: 950px){.shell{grid-template-columns:1fr}}
-
   .tableWrap{max-height:520px;overflow:auto;border-radius:12px}
   table{width:100%;border-collapse:collapse}
   thead th{position:sticky;top:0;background:rgba(255,255,255,0.05);backdrop-filter:blur(10px);color:#c8d5e6;font-weight:600}
   th,td{padding:10px;border-bottom:1px solid rgba(255,255,255,0.08)}
   tbody tr:hover{background:rgba(255,255,255,0.05)}
-
   .chartBox{height:520px;padding:12px}
+  label{color:var(--muted);font-size:0.85rem}
+  input[type="date"]{background:rgba(255,255,255,0.1);border:none;border-radius:8px;padding:4px 8px;color:var(--ink)}
 </style>
 </head>
 <body>
@@ -66,11 +64,14 @@ href='data:image/svg+xml;utf8,
   <header>
     <div class="brand">
       <div class="logo">💧</div>
-      <h1>Water Tank Depth Monitor</h1>
+      <h1>Tank Logger</h1>
     </div>
     <div class="status">
       <span id="connBadge" class="badge">Connecting…</span>
       <a class="badge" href="https://dcgcode.neocities.org/TankLogger/data.csv" download>Download CSV</a>
+      <label>From <input type="date" id="startDate"></label>
+      <label>To <input type="date" id="endDate"></label>
+      <button class="badge" onclick="applyFilter()">Apply</button>
     </div>
   </header>
 
@@ -106,8 +107,14 @@ const chart=new Chart(ctx,{
     responsive:true,animation:{duration:600},maintainAspectRatio:false,
     scales:{
       x:{type:'time',time:{unit:"minute"},grid:{color:'rgba(255,255,255,.07)'},ticks:{color:'#cdd8e7'}},
-      y1:{type:'linear',position:'left',min:0,max:2.5,grid:{color:'rgba(255,255,255,.07)'},ticks:{color:'#cdd8e7'},title:{display:true,text:'Depth (m)'}},
-      y2:{type:'linear',position:'right',min:0,max:30,grid:{drawOnChartArea:false},ticks:{color:'#cdd8e7'},title:{display:true,text:'Temp (°C)'}}
+      y1:{type:'linear',position:'left',min:0,max:2.5,
+          grid:{color:'rgba(255,255,255,.07)'},
+          ticks:{color:'#00e5ff'},
+          title:{display:true,text:'Depth (m)',color:'#00e5ff'}},
+      y2:{type:'linear',position:'right',min:0,max:30,
+          grid:{drawOnChartArea:false},
+          ticks:{color:'#ff6b6b'},
+          title:{display:true,text:'Temp (°C)',color:'#ff6b6b'}}
     },
     plugins:{legend:{labels:{color:'#eaf6ff'}}}
   }
@@ -124,9 +131,9 @@ async function poll(){
         depth:(isNaN(+depth)?null:+depth),
         temp:(isNaN(+temp)?null:+temp)
       };
-    }).filter(d=>d.depth!==null || d.temp!==null); // keep if at least one is valid
+    }).filter(d=>d.depth!==null || d.temp!==null);
 
-    applyFilter();
+    applyFilter(); // always show latest
     document.getElementById('connBadge').textContent="Live";
     document.getElementById('connBadge').className="badge ok";
   }catch(err){
@@ -137,13 +144,21 @@ async function poll(){
 }
 
 function applyFilter(){
-  chart.data.datasets[0].data=allData.filter(d=>d.depth!==null).map(d=>({x:d.ts,y:d.depth}));
-  chart.data.datasets[1].data=allData.filter(d=>d.temp!==null).map(d=>({x:d.ts,y:d.temp}));
+  // get selected dates
+  let start=new Date(document.getElementById('startDate').value);
+  let end=new Date(document.getElementById('endDate').value);
+  if(isNaN(start)) start=new Date(-8640000000000000); // all past
+  if(isNaN(end)) end=new Date(8640000000000000);      // all future
+
+  const filtered=allData.filter(d=>d.ts>=start && d.ts<=end);
+
+  chart.data.datasets[0].data=filtered.filter(d=>d.depth!==null).map(d=>({x:d.ts,y:d.depth}));
+  chart.data.datasets[1].data=filtered.filter(d=>d.temp!==null).map(d=>({x:d.ts,y:d.temp}));
   chart.update();
 
   const tbody=document.getElementById('tbody');
   tbody.innerHTML='';
-  allData.slice().reverse().forEach(d=>{
+  filtered.slice().reverse().forEach(d=>{
     tbody.insertAdjacentHTML('beforeend',
       `<tr><td>${d.ts.toLocaleString()}</td>
            <td>${d.depth!==null ? d.depth.toFixed(2) : '–'}</td>
