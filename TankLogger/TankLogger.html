@@ -57,6 +57,9 @@ href='data:image/svg+xml;utf8,
   .chartBox{height:520px;padding:12px}
   label{color:var(--muted);font-size:0.85rem}
   input[type="date"]{background:rgba(255,255,255,0.1);border:none;border-radius:8px;padding:4px 8px;color:var(--ink)}
+  .dateField {width: 101px;   /* smaller than the default */
+}
+
 </style>
 </head>
 <body>
@@ -69,10 +72,10 @@ href='data:image/svg+xml;utf8,
     </div>
     <div class="status">
       <span id="connBadge" class="badge">Connecting…</span>
-      <button class="badge" onclick="downloadTable()">Download CSV</button>
+      <button class="badge" onclick="downloadTable()">Download Data</button>
       <div class="right-side">
-        <label>From <input type="date" id="startDate"></label>
-        <label>To <input type="date" id="endDate"></label>
+          <label>From <input type="date" id="startDate" class="dateField"></label>
+          <label>To <input type="date" id="endDate" class="dateField"></label>
         <button class="badge" onclick="applyFilter()">Apply</button>
       </div>
     </div>
