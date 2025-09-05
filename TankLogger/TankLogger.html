@@ -4,6 +4,22 @@
 <meta charset="utf-8" />
 <title>Water Tank Depth Monitor</title>
 <meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="theme-color" content="#0e1726" />
+
+<link rel="icon" type="image/svg+xml"
+href='data:image/svg+xml;utf8,
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="%2300e5ff"/>5
+      <stop offset="1" stop-color="%234facfe"/>
+    </linearGradient>
+  </defs>
+  <path fill="url(%23g)"
+        d="M32 4 C24 16 16 26 16 38 a16 16 0 1 0 32 0 c0-12-8-22-16-34z"/>
+  <circle cx="26" cy="22" r="4" fill="%23ffffff" fill-opacity=".30"/>
+</svg>'/>
+
 <link rel="preconnect" href="https://cdn.jsdelivr.net">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns"></script>
@@ -30,36 +46,9 @@
   .card{background:var(--panel);border-radius:16px;backdrop-filter:blur(12px);
         border:1px solid rgba(255,255,255,0.08);box-shadow:0 10px 28px rgba(0,0,0,.35)}
   .pad{padding:18px}
-
   .controls{display:flex;flex-wrap:wrap;gap:14px;align-items:center;margin-bottom:14px}
 
-  /* Modern slider toggle */
-  .toggleWrapper{display:flex;align-items:center;gap:12px}
-  .toggle {
-    position: relative; width: 242px; height: 40px; background:rgba(255,255,255,0.08);
-    border-radius:20px; cursor:pointer; display:flex; align-items:center;
-    justify-content:space-between; font-size:0.95rem; font-weight:500;
-  }
-  .toggle span{flex:1;text-align:center;color:var(--muted);z-index:2}
-  .toggle .knob {
-    position:absolute;top:3px;bottom:3px;width:50%;border-radius:16px;
-    background:linear-gradient(135deg,var(--accent1),var(--accent2));
-    transition:transform 0.3s ease;
-  }
-  .toggle input{display:none}
-  .toggle input:checked + .knob{transform:translateX(100%)}
-  .toggle input:checked ~ span:last-child{color:#fff;font-weight:600}
-  .toggle input:not(:checked) ~ span:first-of-type{color:#fff;font-weight:600}
-
-  /* Date inputs styled */
-  .controls label.dateLabel {
-    display:flex;align-items:center;gap:6px;padding:6px 10px;
-    border:1px solid rgba(255,255,255,0.12);border-radius:12px;
-    background:rgba(255,255,255,0.02);color:var(--muted)
-  }
-  .controls input[type=date]{background:transparent;border:none;color:var(--ink);outline:none}
-
-  .shell{display:grid;grid-template-columns:420px 1fr;gap:20px}
+  .shell{display:grid;grid-template-columns:1fr 420px;gap:20px}
   @media (max-width: 950px){.shell{grid-template-columns:1fr}}
 
   .tableWrap{max-height:520px;overflow:auto;border-radius:12px}
@@ -80,56 +69,47 @@
       <h1>Water Tank Depth Monitor</h1>
     </div>
     <div class="status">
-
+      <span id="connBadge" class="badge">Connecting…</span>
+      <a class="badge" href="https://dcgcode.neocities.org/TankLogger/data.csv" download>Download CSV</a>
     </div>
   </header>
 
-  <div class="card pad" style="margin-bottom:20px;">
-    <div class="controls">
-      <span id="connBadge" class="badge warn">Connecting…</span>
-      <a class="badge" href="https://dcgcode.neocities.org/logs/data.csv" download>Download CSV</a>      <div class="toggleWrapper">
-        <label class="toggle">
-          <input type="checkbox" id="rangeToggle">
-          <div class="knob"></div>
-          <span>All Data</span>
-          <span>Date Range</span>
-        </label>
-      </div>
-      <label id="fromLabel" class="dateLabel" style="display:none;">From <input type="date" id="fromDate"></label>
-      <label id="toLabel" class="dateLabel" style="display:none;">To <input type="date" id="toDate"></label>
-    </div>
-  </div>
-
   <div class="shell">
+    <div class="card chartBox">
+      <canvas id="chart"></canvas>
+    </div>
     <div class="card pad">
       <div class="tableWrap">
         <table>
-          <thead><tr><th>Timestamp</th><th>Depth (m)</th></tr></thead>
+          <thead><tr><th>Timestamp</th><th>Depth (m)</th><th>Temp (°C)</th></tr></thead>
           <tbody id="tbody"></tbody>
         </table>
       </div>
-    </div>
-    <div class="card chartBox">
-      <canvas id="chart"></canvas>
     </div>
   </div>
 </div>
 
 <script>
-const CSV_URL="https://dcgcode.neocities.org/logs/data.csv";
+const CSV_URL="https://dcgcode.neocities.org/TankLogger/data.csv";
 let allData=[];
 
 const ctx=document.getElementById('chart').getContext('2d');
 const chart=new Chart(ctx,{
   type:'line',
-  data:{datasets:[{label:'Depth (m)',data:[],tension:0.25,pointRadius:3,borderWidth:2,
-                   borderColor:'#00e5ff',backgroundColor:'rgba(0,229,255,0.25)'}]},
+  data:{datasets:[
+    {label:'Depth (m)',data:[],yAxisID:'y1',tension:0.25,pointRadius:2,borderWidth:2,
+     borderColor:'#00e5ff',backgroundColor:'rgba(0,229,255,0.25)'},
+    {label:'Temp (°C)',data:[],yAxisID:'y2',tension:0.25,pointRadius:2,borderWidth:2,
+     borderColor:'#ff6b6b',backgroundColor:'rgba(255,107,107,0.25)'}
+  ]},
   options:{
     responsive:true,animation:{duration:600},maintainAspectRatio:false,
     scales:{
       x:{type:'time',time:{unit:"minute"},grid:{color:'rgba(255,255,255,.07)'},ticks:{color:'#cdd8e7'}},
-      y:{min:0,max:5,grid:{color:'rgba(255,255,255,.07)'},ticks:{color:'#cdd8e7'},title:{display:true,text:'Depth (m)'}}
-    },plugins:{legend:{labels:{color:'#eaf6ff'}}}
+      y1:{type:'linear',position:'left',min:0,max:2.5,grid:{color:'rgba(255,255,255,.07)'},ticks:{color:'#cdd8e7'},title:{display:true,text:'Depth (m)'}},
+      y2:{type:'linear',position:'right',min:0,max:30,grid:{drawOnChartArea:false},ticks:{color:'#cdd8e7'},title:{display:true,text:'Temp (°C)'}}
+    },
+    plugins:{legend:{labels:{color:'#eaf6ff'}}}
   }
 });
 
@@ -138,49 +118,30 @@ async function poll(){
     const res=await fetch(CSV_URL+'?'+Date.now(),{cache:'no-store'});
     const rows=(await res.text()).trim().split('\n').slice(1);
     allData=rows.map(r=>{
-      const[ts,d]=r.split(',');
-      return{x:new Date(ts.replace(' ','T')),y:+d};
+      const[ts,depth,temp]=r.split(',');
+      return{ts:new Date(ts.replace(' ','T')),depth:+depth,temp:+temp};
     });
     applyFilter();
     document.getElementById('connBadge').textContent="Live";
     document.getElementById('connBadge').className="badge ok";
   }catch(err){
+    console.error(err);
     document.getElementById('connBadge').textContent="Error";
     document.getElementById('connBadge').className="badge err";
   }
 }
 
 function applyFilter(){
-  let data=allData;
-  if(document.getElementById('rangeToggle').checked){
-    document.getElementById('fromLabel').style.display='inline-flex';
-    document.getElementById('toLabel').style.display='inline-flex';
-    const from=document.getElementById('fromDate').value;
-    const to=document.getElementById('toDate').value;
-    if(from||to){
-      data=data.filter(p=>{
-        const d=p.x;
-        return (!from||d>=new Date(from)) && (!to||d<=new Date(to+"T23:59:59"));
-      });
-    }
-  } else {
-    document.getElementById('fromLabel').style.display='none';
-    document.getElementById('toLabel').style.display='none';
-  }
-
-  chart.data.datasets[0].data=data;
+  chart.data.datasets[0].data=allData.map(d=>({x:d.ts,y:d.depth}));
+  chart.data.datasets[1].data=allData.map(d=>({x:d.ts,y:d.temp}));
   chart.update();
 
   const tbody=document.getElementById('tbody');
   tbody.innerHTML='';
-  data.slice().reverse().forEach(p=>{
-    tbody.insertAdjacentHTML('beforeend',`<tr><td>${p.x.toLocaleString()}</td><td>${p.y.toFixed(2)}</td></tr>`);
+  allData.slice().reverse().forEach(d=>{
+    tbody.insertAdjacentHTML('beforeend',`<tr><td>${d.ts.toLocaleString()}</td><td>${d.depth.toFixed(2)}</td><td>${d.temp.toFixed(2)}</td></tr>`);
   });
 }
-
-document.getElementById('rangeToggle').onchange=applyFilter;
-document.getElementById('fromDate').onchange=applyFilter;
-document.getElementById('toDate').onchange=applyFilter;
 
 poll();
 setInterval(poll,10000);
