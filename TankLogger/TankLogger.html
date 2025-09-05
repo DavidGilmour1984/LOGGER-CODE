@@ -31,7 +31,7 @@ href='data:image/svg+xml;utf8,
   }
   *{box-sizing:border-box}
   body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 Helvetica,Arial,sans-serif}
-  .wrap{max-width:1300px;margin:auto;padding:20px}
+  .wrap{max-width:1400px;margin:auto;padding:20px}
   header{display:flex;justify-content:space-between;align-items:center;margin-bottom:24px;flex-wrap:wrap;gap:10px}
   .brand{display:flex;align-items:center;gap:10px}
   .logo{width:28px;height:28px;border-radius:50%;background:linear-gradient(135deg,var(--accent1),var(--accent2));
@@ -39,6 +39,7 @@ href='data:image/svg+xml;utf8,
         box-shadow:0 0 12px var(--accent1)}
   h1{margin:0;font-size:1.5rem;font-weight:600;letter-spacing:-0.5px}
   .status{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+  .status .right-side{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
   .badge{border:1px solid var(--muted);padding:4px 10px;border-radius:20px;color:var(--muted);font-size:0.85rem;text-decoration:none;cursor:pointer;background:none}
   .badge.ok{border-color:var(--good);color:var(--good)}
   .badge.err{border-color:var(--bad);color:var(--bad)}
@@ -46,7 +47,7 @@ href='data:image/svg+xml;utf8,
   .card{background:var(--panel);border-radius:16px;backdrop-filter:blur(12px);
         border:1px solid rgba(255,255,255,0.08);box-shadow:0 10px 28px rgba(0,0,0,.35)}
   .pad{padding:18px}
-  .shell{display:grid;grid-template-columns:1fr 420px;gap:20px}
+  .shell{display:grid;grid-template-columns:60% 40%;gap:20px}
   @media (max-width: 950px){.shell{grid-template-columns:1fr}}
   .tableWrap{max-height:520px;overflow:auto;border-radius:12px}
   table{width:100%;border-collapse:collapse}
@@ -68,10 +69,12 @@ href='data:image/svg+xml;utf8,
     </div>
     <div class="status">
       <span id="connBadge" class="badge">Connecting…</span>
-      <a class="badge" href="https://dcgcode.neocities.org/TankLogger/data.csv" download>Download CSV</a>
-      <label>From <input type="date" id="startDate"></label>
-      <label>To <input type="date" id="endDate"></label>
-      <button class="badge" onclick="applyFilter()">Apply</button>
+      <button class="badge" onclick="downloadTable()">Download CSV</button>
+      <div class="right-side">
+        <label>From <input type="date" id="startDate"></label>
+        <label>To <input type="date" id="endDate"></label>
+        <button class="badge" onclick="applyFilter()">Apply</button>
+      </div>
     </div>
   </header>
 
@@ -81,8 +84,17 @@ href='data:image/svg+xml;utf8,
     </div>
     <div class="card pad">
       <div class="tableWrap">
-        <table>
-          <thead><tr><th>Timestamp</th><th>Depth (m)</th><th>Temp (°C)</th></tr></thead>
+        <table id="dataTable">
+          <thead>
+            <tr>
+              <th>Timestamp</th>
+              <th>Volume (L)</th>
+              <th>Temp (°C)</th>
+              <th>Net Use (L)</th>
+              <th>Net Gain (L)</th>
+              <th>Rain (mm/hr)</th>
+            </tr>
+          </thead>
           <tbody id="tbody"></tbody>
         </table>
       </div>
@@ -94,11 +106,22 @@ href='data:image/svg+xml;utf8,
 const CSV_URL="https://dcgcode.neocities.org/TankLogger/data.csv";
 let allData=[];
 
+// Tank + roof constants
+const DIAMETER = 3.61;                // m, internal diameter
+const RADIUS = DIAMETER/2;
+const ROOF_AREA = 200;                // m² catchment
+const NOISE_THRESHOLD = 10;           // litres (ignore smaller changes)
+
+// Depth → Volume (L)
+function depthToVolume(depthM){
+  return Math.PI * RADIUS * RADIUS * depthM * 1000;
+}
+
 const ctx=document.getElementById('chart').getContext('2d');
 const chart=new Chart(ctx,{
   type:'line',
   data:{datasets:[
-    {label:'Depth (m)',data:[],yAxisID:'y1',tension:0.25,pointRadius:2,borderWidth:2,
+    {label:'Volume (L)',data:[],yAxisID:'y1',tension:0.25,pointRadius:2,borderWidth:2,
      borderColor:'#00e5ff',backgroundColor:'rgba(0,229,255,0.25)'},
     {label:'Temp (°C)',data:[],yAxisID:'y2',tension:0.25,pointRadius:2,borderWidth:2,
      borderColor:'#ff6b6b',backgroundColor:'rgba(255,107,107,0.25)'}
@@ -107,10 +130,10 @@ const chart=new Chart(ctx,{
     responsive:true,animation:{duration:600},maintainAspectRatio:false,
     scales:{
       x:{type:'time',time:{unit:"minute"},grid:{color:'rgba(255,255,255,.07)'},ticks:{color:'#cdd8e7'}},
-      y1:{type:'linear',position:'left',min:0,max:2.5,
+      y1:{type:'linear',position:'left',min:0,max:25000,
           grid:{color:'rgba(255,255,255,.07)'},
           ticks:{color:'#00e5ff'},
-          title:{display:true,text:'Depth (m)',color:'#00e5ff'}},
+          title:{display:true,text:'Volume (L)',color:'#00e5ff'}},
       y2:{type:'linear',position:'right',min:0,max:30,
           grid:{drawOnChartArea:false},
           ticks:{color:'#ff6b6b'},
@@ -126,14 +149,16 @@ async function poll(){
     const rows=(await res.text()).trim().split('\n').slice(1);
     allData=rows.map(r=>{
       const[ts,depth,temp]=r.split(',');
+      const depthM = (isNaN(+depth)?null:+depth);
       return {
         ts:new Date(ts.replace(' ','T')),
-        depth:(isNaN(+depth)?null:+depth),
+        depth:depthM,
+        volume:(depthM!==null ? depthToVolume(depthM) : null),
         temp:(isNaN(+temp)?null:+temp)
       };
-    }).filter(d=>d.depth!==null || d.temp!==null);
+    }).filter(d=>d.volume!==null || d.temp!==null);
 
-    applyFilter(); // always show latest
+    applyFilter();
     document.getElementById('connBadge').textContent="Live";
     document.getElementById('connBadge').className="badge ok";
   }catch(err){
@@ -144,26 +169,66 @@ async function poll(){
 }
 
 function applyFilter(){
-  // get selected dates
   let start=new Date(document.getElementById('startDate').value);
   let end=new Date(document.getElementById('endDate').value);
-  if(isNaN(start)) start=new Date(-8640000000000000); // all past
-  if(isNaN(end)) end=new Date(8640000000000000);      // all future
+  if(isNaN(start)) start=new Date(-8640000000000000);
+  if(isNaN(end)) end=new Date(8640000000000000);
 
   const filtered=allData.filter(d=>d.ts>=start && d.ts<=end);
 
-  chart.data.datasets[0].data=filtered.filter(d=>d.depth!==null).map(d=>({x:d.ts,y:d.depth}));
+  chart.data.datasets[0].data=filtered.filter(d=>d.volume!==null).map(d=>({x:d.ts,y:d.volume}));
   chart.data.datasets[1].data=filtered.filter(d=>d.temp!==null).map(d=>({x:d.ts,y:d.temp}));
   chart.update();
 
   const tbody=document.getElementById('tbody');
   tbody.innerHTML='';
-  filtered.slice().reverse().forEach(d=>{
+
+  filtered.slice().reverse().forEach((d, idx, arr)=>{
+    let netUse="", netGain="", rain="";
+    if(idx < arr.length-1){
+      const prev = arr[idx+1]; 
+      const dt = (d.ts - prev.ts)/1000/60; // minutes
+      if(dt > 30 && dt < 90 && prev.volume!==null && d.volume!==null){
+        const diff = d.volume - prev.volume;
+        if(Math.abs(diff) > NOISE_THRESHOLD){
+          if(diff < 0){
+            netUse = (-diff).toFixed(0);
+          }else{
+            netGain = diff.toFixed(0);
+            rain = (diff / ROOF_AREA).toFixed(1);
+          }
+        }
+      }
+    }
+
     tbody.insertAdjacentHTML('beforeend',
-      `<tr><td>${d.ts.toLocaleString()}</td>
-           <td>${d.depth!==null ? d.depth.toFixed(2) : '–'}</td>
-           <td>${d.temp!==null ? d.temp.toFixed(2) : '–'}</td></tr>`);
+      `<tr>
+         <td>${d.ts.toLocaleString()}</td>
+         <td>${d.volume!==null ? d.volume.toFixed(0) : ''}</td>
+         <td>${d.temp!==null ? d.temp.toFixed(2) : ''}</td>
+         <td>${netUse}</td>
+         <td>${netGain}</td>
+         <td>${rain}</td>
+       </tr>`);
   });
+}
+
+// Export currently visible table to CSV
+function downloadTable(){
+  const rows = [];
+  const table = document.getElementById("dataTable");
+  for (const tr of table.querySelectorAll("tr")) {
+    const cells = [...tr.querySelectorAll("th,td")].map(td => `"${td.innerText}"`);
+    rows.push(cells.join(","));
+  }
+  const csvContent = rows.join("\n");
+  const blob = new Blob([csvContent], { type: "text/csv" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "tanklogger_filtered.csv";
+  a.click();
+  URL.revokeObjectURL(url);
 }
 
 poll();
