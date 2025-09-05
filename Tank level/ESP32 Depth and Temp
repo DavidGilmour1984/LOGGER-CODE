@@ -176,40 +176,43 @@ void sendHomePage() {
   float depth = readDepth();
   float tempC = readTemperature();
 
-  String html =
-    "<!DOCTYPE html><html><head><meta charset='UTF-8'/>"
-    "<meta name='viewport' content='width=device-width, initial-scale=1'/>"
-    "<title>Depth Logger Setup</title>"
-    "<style>:root{--bg:#0e1726;--panel:rgba(255,255,255,0.08);--ink:#f5f9ff;--muted:#b0c4de;--accent1:#00e5ff;--danger:#ff6b6b;}"
-    "body{margin:0;background:var(--bg);color:var(--ink);font:32px Helvetica,Arial,sans-serif;"
-    "display:flex;align-items:center;justify-content:center;min-height:100vh;padding:24px}"
-    ".card{background:var(--panel);padding:40px;border-radius:32px;max-width:1000px;width:100%;box-shadow:0 30px 60px rgba(0,0,0,.5);}"
-    "h1{font-size:3.0rem;margin:0 0 24px 0;text-align:center}"
-    "p{margin:12px 0;font-size:1.6rem;color:var(--muted)}"
-    "label{display:block;margin:18px 0 8px 0;font-size:1.6rem;color:var(--muted)}"
-    "input{width:100%;padding:20px;border:none;border-radius:16px;background:rgba(255,255,255,0.1);color:var(--ink);font-size:1.6rem}"
-    "button{padding:18px 22px;margin-top:16px;font-size:1.6rem;font-weight:700;border:none;border-radius:16px;background:var(--accent1);color:#000;cursor:pointer}"
-    "button:hover{filter:brightness(1.15)}.danger{background:var(--danger);color:#fff}"
-    ".row{display:grid;grid-template-columns:auto 1fr auto;gap:12px;align-items:center;margin:10px 0}"
-    ".split{display:grid;grid-template-columns:1fr 1fr;gap:16px}"
-    "</style>"
-    "<script>function confirmClear(path){if(confirm('Are you sure?')){window.location.href='/' + path;}}</script>"
-    "</head><body><div class='card'>";
+String html =
+  "<!DOCTYPE html><html><head><meta charset='UTF-8'/>"
+  "<meta name='viewport' content='width=device-width, initial-scale=1'/>"
+  "<title>Depth Logger Setup</title>"
+  "<style>:root{--bg:#0e1726;--panel:rgba(255,255,255,0.08);--ink:#f5f9ff;--muted:#b0c4de;--accent1:#00e5ff;--danger:#ff6b6b;}"
+  "body{margin:0;background:var(--bg);color:var(--ink);font:32px Helvetica,Arial,sans-serif;"
+  "display:flex;align-items:center;justify-content:center;min-height:100vh;padding:24px}"
+  ".card{background:var(--panel);padding:40px;border-radius:32px;max-width:1000px;width:100%;box-shadow:0 30px 60px rgba(0,0,0,.5);}"
+  "h1{font-size:3.0rem;margin:0 0 24px 0;text-align:center}"
+  "p{margin:12px 0;font-size:1.6rem;color:var(--muted)}"
+  "label{display:block;margin:18px 0 8px 0;font-size:1.6rem;color:var(--muted)}"
+  "input{width:80%;padding:20px;border:none;border-radius:16px;background:rgba(255,255,255,0.1);color:var(--ink);font-size:1.6rem}"  // <-- changed to 80%
+  "button{padding:18px 22px;margin-top:16px;font-size:1.6rem;font-weight:700;border:none;border-radius:16px;background:var(--accent1);color:#000;cursor:pointer}"
+  "button:hover{filter:brightness(1.15)}.danger{background:var(--danger);color:#fff}"
+  ".row{display:grid;grid-template-columns:auto 1fr auto;gap:12px;align-items:center;margin:10px 0}"
+  ".split{display:grid;grid-template-columns:1fr 1fr;gap:16px}"
+  ".split{display:grid;grid-template-columns:1fr 1fr;gap:16px}"
+  ".split3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px}"
 
-  html += "<h1>Depth Logger</h1>";
+  "</style>"
+  "<script>function confirmClear(path){if(confirm('Are you sure?')){window.location.href='/' + path;}}</script>"
+  "</head><body><div class='card'>";
+
+
+  html += "<h1>Tank Logger</h1>";
   html += "<p><b>MAC:</b> " + mac + "</p>";
   html += "<p><b>Depth:</b> " + String(depth,2) + " m | <b>Temp:</b> " + String(tempC,2) + " °C</p>";
 
   // Buttons
   html += "<form action='/test'><button type='submit'>Send Test Data</button></form>";
-  html += "<form action='/upload'><button type='submit'>Upload Now</button></form>";
 
   // Calibration
-  html += "<div class='split'>"
+  html += "<div class='split3'>"
           "<form action='/cal0'><button type='submit'>Set 0 m Calibration</button></form>"
           "<form action='/cal2'><button type='submit'>Set 2 m Calibration</button></form>"
-          "</div>"
-          "<form action='/clearcal'><button type='submit' class='danger'>Clear Calibration</button></form>";
+          "<form action='/clearcal'><button type='submit' class='danger'>Clear Calibration</button></form>"
+          "</div>";
 
   // Editable fields
   html += "<label>WiFi SSID</label>"
@@ -257,6 +260,9 @@ void setup(){
   Serial.begin(115200);
   Serial2Port.begin(9600, SERIAL_8N1, 16, 17);
 
+  Serial.println("\n[BOOT] DepthLogger starting...");
+  Serial2Port.println("\n[BOOT] DepthLogger starting...");
+
   prefs.begin("depthlogger", false);
   calZero=prefs.getFloat("calZero",0.0);
   calTwoM=prefs.getFloat("calTwoM",4095.0);
@@ -266,13 +272,23 @@ void setup(){
   localFile=prefs.getString("localFile","/data.csv");
   remoteFile=prefs.getString("remoteFile","logs/data.csv");
 
+  Serial.printf("[CFG] Loaded calibration: Zero=%.1f TwoM=%.1f\n", calZero, calTwoM);
+  Serial.printf("[CFG] WiFi SSID='%s' passLen=%d APIkeyLen=%d\n", wifiSSID.c_str(), wifiPASS.length(), apiKey.length());
+  Serial.printf("[CFG] Local='%s' Remote='%s'\n", localFile.c_str(), remoteFile.c_str());
+
   pinMode(ONE_WIRE_BUS, INPUT_PULLUP);
   sensors.begin();
+  Serial.println("[TEMP] Dallas sensor initialized");
 
   WiFi.mode(WIFI_AP_STA);
   WiFi.softAP(AP_SSID,AP_PASS);
+  Serial.printf("[NET] Access Point started: SSID='%s' PASS='%s' IP=%s\n", 
+                AP_SSID, AP_PASS, WiFi.softAPIP().toString().c_str());
 
-  if(wifiSSID!=""){ WiFi.begin(wifiSSID.c_str(),wifiPASS.c_str()); }
+  if(wifiSSID!=""){ 
+    Serial.printf("[NET] Attempting STA connect to '%s'...\n", wifiSSID.c_str()); 
+    WiFi.begin(wifiSSID.c_str(),wifiPASS.c_str()); 
+  }
 
   server.on("/",handleRoot);
   server.on("/test",handleTest);
@@ -282,35 +298,86 @@ void setup(){
   server.on("/clearcal",handleClearCal);
 
   server.begin();
-  configTime(0,0,ntpServer); setenv("TZ",tzRule,1); tzset();
+  Serial.println("[WEB] Web server started");
 
-  if(!LittleFS.begin(false)) createFreshCSV();
+  configTime(0,0,ntpServer); setenv("TZ",tzRule,1); tzset();
+  Serial.println("[TIME] Time config set, syncing...");
+
+  if(!LittleFS.begin(false)) {
+    Serial.println("[FS] Mount failed, creating fresh CSV...");
+    createFreshCSV();
+  } else {
+    Serial.println("[FS] LittleFS mounted OK");
+  }
 }
 
 void loop(){
   server.handleClient();
+
   static bool didTopOfHour=false;
   static unsigned long awakeStart=millis();
   static unsigned long lastReport=0;
+  static unsigned long lastClientCheck=0;
 
-  if(millis()-lastReport>10000){
+  // Status update every 5 seconds
+  if(millis()-lastReport>5000){
     lastReport=millis();
-    Serial.printf("[SYS] Depth=%.2fm Temp=%.2fC\n",readDepth(),readTemperature());
+    float d=readDepth();
+    float t=readTemperature();
+    long uptime = millis()/1000;
+    long left=(long)(120000-(millis()-awakeStart))/1000;
+    if(left<0) left=0;
+    Serial.printf("[SYS] Uptime=%lus, awake left=%lds | Depth=%.2fm Temp=%.2fC\n",
+                  uptime, left, d, t);
   }
 
+  // Detect top of hour and log/upload
   struct tm ti;
-  if(!didTopOfHour && getLocalTime(&ti) && ti.tm_min==0){
-    didTopOfHour=true;
-    appendRowAndUpload();
+  if(!didTopOfHour && getLocalTime(&ti)){
+    if(ti.tm_min==0){
+      Serial.printf("[LOG] Top of hour (%02d:%02d:%02d), logging now\n", ti.tm_hour, ti.tm_min, ti.tm_sec);
+      didTopOfHour=true;
+      appendRowAndUpload();
+    }
   }
 
+  // Verbose client status every 15s
+  if(millis()-lastClientCheck>15000){
+    lastClientCheck=millis();
+    wl_status_t st = WiFi.status();
+    if(st==WL_CONNECTED){
+      Serial.printf("[NET] STA connected IP=%s RSSI=%d\n", WiFi.localIP().toString().c_str(), WiFi.RSSI());
+    } else {
+      Serial.printf("[NET] STA not connected (status=%d)\n", st);
+    }
+  }
+
+  // After ~2 minutes, sleep
   if(millis()-awakeStart>120000){
+    Serial.println("[SYS] Awake window ended, preparing to sleep...");
     WiFi.disconnect(true); WiFi.mode(WIFI_OFF); btStop();
+    delay(100);
+    Serial.println("[NET] WiFi + BT shut down");
+
     struct tm timeinfo; getLocalTime(&timeinfo);
     int secsPast=timeinfo.tm_min*60+timeinfo.tm_sec;
     int secsToHour=3600-secsPast;
-    int sleepSecs=secsToHour-120; if(sleepSecs<10) sleepSecs=10;
+    int sleepSecs=secsToHour-120; 
+    if(sleepSecs<10) sleepSecs=10;
+
+    Serial.printf("[SYS] Will sleep for %d seconds\n", sleepSecs);
+    Serial.printf("[SYS] Expected wake-up around %02d:%02d\n",
+                  (timeinfo.tm_hour + (timeinfo.tm_min + sleepSecs/60)/60)%24,
+                  (timeinfo.tm_min + sleepSecs/60)%60);
+
+    // Countdown before sleep
+    for(int i=10;i>0;i--){
+      Serial.printf("[SYS] Entering deep sleep in %d...\n", i);
+      delay(1000);
+    }
+
     esp_sleep_enable_timer_wakeup((uint64_t)sleepSecs*1000000ULL);
+    Serial.println("[SYS] Going into deep sleep now!");
     esp_deep_sleep_start();
   }
 }
