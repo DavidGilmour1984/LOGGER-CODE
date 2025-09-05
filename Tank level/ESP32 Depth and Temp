@@ -1,0 +1,302 @@
+#include <WiFi.h>
+#include <WiFiClientSecure.h>
+#include <HTTPClient.h>
+#include <LittleFS.h>
+#include <WebServer.h>
+#include <Preferences.h>
+#include "time.h"
+#include "esp_sleep.h"
+
+#include <OneWire.h>
+#include <DallasTemperature.h>
+
+// ==== USER SETTINGS ====
+const char* REMOTE_FILENAME = "logs/data.csv";
+
+const int   ADC_PIN = 36;
+const float VREF    = 3.3f;
+
+// Dallas DS18B20 on GPIO14
+#define ONE_WIRE_BUS 14
+OneWire oneWire(ONE_WIRE_BUS);
+DallasTemperature sensors(&oneWire);
+
+// Calibration + WiFi credentials (stored in flash)
+Preferences prefs;
+float calZero = 0.0;
+float calTwoM = 4095.0;
+String wifiSSID = "";
+String wifiPASS = "";
+String apiKey   = "";
+
+// ==== AP settings ====
+const char* AP_SSID = "DepthLogger";
+const char* AP_PASS = "12345678";
+WebServer server(80);
+
+// ==== Time / NZDST ====
+const char* ntpServer = "pool.ntp.org";
+const char* tzRule = "NZST-12NZDT,M9.5.0,M4.1.0/3"; // NZDST rules
+
+// CSV Header
+const char* CSV_HEADER = "timestamp,depth_m,temperature_C\n";
+
+// UART2 on pins 16/17
+HardwareSerial Serial2Port(2);
+
+// --- Utility logging ---
+void logBoth(const String &msg) { Serial.print(msg); Serial2Port.print(msg); }
+void logBothln(const String &msg) { Serial.println(msg); Serial2Port.println(msg); }
+
+// --- Time helpers ---
+String currentTimestamp() {
+  struct tm timeinfo;
+  if (!getLocalTime(&timeinfo)) return "1970-01-01 00:00:00";
+  char buf[25];
+  strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", &timeinfo);
+  return String(buf);
+}
+
+// --- Depth conversion ---
+float readDepth() {
+  int raw = analogRead(ADC_PIN);
+  float depth = 2.0f * (raw - calZero) / (calTwoM - calZero);
+  if (depth < 0) depth = 0;
+  return depth;
+}
+
+// --- Temperature ---
+float readTemperature() {
+  sensors.requestTemperatures();
+  float t = sensors.getTempCByIndex(0);
+  if (t == DEVICE_DISCONNECTED_C) {
+    Serial.println("[TEMP] Error: DS18B20 not found");
+    return NAN;
+  }
+  return t;
+}
+
+// --- FS ---
+bool createFreshCSV() {
+  Serial.println("[FS] Creating fresh CSV file...");
+  if (!LittleFS.begin(false)) {
+    if (!LittleFS.begin(true)) {
+      Serial.println("[FS] Mount failed");
+      return false;
+    }
+  }
+  LittleFS.format();
+  LittleFS.begin(false);
+  File f = LittleFS.open("/data.csv", FILE_WRITE);
+  if (!f) { Serial.println("[FS] Failed to create /data.csv"); return false; }
+  f.print(CSV_HEADER);
+  f.close();
+  Serial.println("[FS] New /data.csv created with header");
+  return true;
+}
+
+void appendRow() {
+  Serial.println("[FS] Appending row to CSV...");
+  File f = LittleFS.open("/data.csv", FILE_APPEND);
+  if (!f) { Serial.println("[FS] Failed to open CSV for append"); return; }
+
+  float depth = readDepth();
+  float tempC = readTemperature();
+
+  String row = currentTimestamp() + "," + String(depth, 2) + "," + String(tempC, 2) + "\n";
+  f.print(row); f.close();
+
+  Serial.printf("[FS] Wrote row: %s", row.c_str());
+  File rf = LittleFS.open("/data.csv", FILE_READ);
+  Serial.printf("[FS] File size now %d bytes\n", rf.size());
+  rf.close();
+}
+
+// --- Upload ---
+bool uploadToNeocities() {
+  if (apiKey == "") {
+    Serial.println("[NET] No API key set, skipping upload.");
+    return false;
+  }
+  Serial.println("[NET] Preparing upload...");
+  File f = LittleFS.open("/data.csv", FILE_READ);
+  if (!f) { Serial.println("[NET] No CSV file to upload"); return false; }
+  size_t size = f.size();
+  std::unique_ptr<uint8_t[]> buf(new uint8_t[size]);
+  f.read(buf.get(), size); f.close();
+
+  String boundary = "----ESP32Boundary";
+  String start =
+    "--" + boundary + "\r\n"
+    "Content-Disposition: form-data; name=\"" + String(REMOTE_FILENAME) + "\"; filename=\"data.csv\"\r\n"
+    "Content-Type: text/csv\r\n\r\n";
+  String end = "\r\n--" + boundary + "--\r\n";
+
+  size_t len = start.length() + size + end.length();
+  std::unique_ptr<uint8_t[]> body(new uint8_t[len]);
+  memcpy(body.get(), start.c_str(), start.length());
+  memcpy(body.get() + start.length(), buf.get(), size);
+  memcpy(body.get() + start.length() + size, end.c_str(), end.length());
+
+  Serial.println("[NET] Uploading to Neocities...");
+  WiFiClientSecure client; client.setInsecure();
+  HTTPClient http;
+  if (!http.begin(client, "https://neocities.org/api/upload")) {
+    Serial.println("[NET] HTTP begin failed");
+    return false;
+  }
+  http.addHeader("Authorization", String("Bearer ") + apiKey);
+  http.addHeader("Content-Type", "multipart/form-data; boundary=" + boundary);
+  int code = http.POST(body.get(), len);
+  http.end();
+  Serial.printf("[NET] Upload HTTP %d\n", code);
+  return (code >= 200 && code < 300);
+}
+
+// --- Web UI ---
+void handleRoot() {
+  String mac = WiFi.macAddress();
+  float depth = readDepth();
+  float tempC = readTemperature();
+
+  String html = "<!DOCTYPE html><html><head><meta charset='UTF-8'/>"
+                "<meta name='viewport' content='width=device-width, initial-scale=1'/>"
+                "<title>Depth Logger Setup</title>"
+                "<style>:root{--bg:#0e1726;--panel:rgba(255,255,255,0.08);--ink:#f5f9ff;--muted:#b0c4de;--accent1:#00e5ff;--danger:#ff6b6b;}"
+                "body{margin:0;background:var(--bg);color:var(--ink);font:32px Helvetica,Arial,sans-serif;"
+                "display:flex;align-items:center;justify-content:center;height:100vh}"
+                ".card{background:var(--panel);padding:60px;border-radius:32px;max-width:900px;width:100%;box-shadow:0 30px 60px rgba(0,0,0,.5);}"
+                "h1{font-size:3.5rem;margin:0 0 30px 0;text-align:center}"
+                "p{margin:16px 0;font-size:2rem;color:var(--muted)}"
+                "label{display:block;margin-top:28px;font-size:2rem;color:var(--muted)}"
+                "input{width:100%;padding:24px;margin-top:8px;margin-bottom:24px;border:none;border-radius:20px;background:rgba(255,255,255,0.1);color:var(--ink);font-size:2rem}"
+                "button{width:100%;padding:28px;margin-top:20px;font-size:2.2rem;font-weight:700;border:none;border-radius:24px;background:var(--accent1);color:#000;cursor:pointer}"
+                "button:hover{filter:brightness(1.15)}.danger{background:var(--danger);color:#fff}</style>"
+                "<script>function confirmClear(type){if(confirm('Clear '+type+'?')){window.location.href='/' + type;}}</script>"
+                "</head><body><div class='card'>";
+
+  html += "<h1>Depth Logger</h1>";
+  html += "<p><b>MAC:</b> " + mac + "</p>";
+  html += "<p><b>Depth:</b> " + String(depth,2) + " m | <b>Temp:</b> " + String(tempC,2) + " °C</p>";
+
+  // Calibration
+  html += "<form action='/cal0'><button type='submit'>Set 0 m Calibration</button></form>";
+  html += "<form action='/cal2'><button type='submit'>Set 2 m Calibration</button></form>";
+  html += "<form action='/clearcal'><button type='submit' class='danger'>Clear Calibration</button></form>";
+
+  // WiFi + API setup
+  html += "<form action='/savewifi' method='POST'>"
+          "<label>WiFi SSID</label><input name='ssid' value='" + wifiSSID + "'>"
+          "<label>Password</label><input name='pass' value='" + wifiPASS + "'>"
+          "<label>API Key</label><input name='api' value='" + apiKey + "'>"
+          "<button type='submit'>Save & Reboot</button></form>";
+
+  // Danger buttons
+  html += "<button class='danger' onclick=\"confirmClear('reset')\">Clear Logs</button>";
+  html += "<button class='danger' onclick=\"confirmClear('clearcreds')\">Clear Credentials</button>";
+
+  html += "</div></body></html>";
+  server.send(200, "text/html", html);
+}
+
+void handleCal0() { calZero=analogRead(ADC_PIN); prefs.putFloat("calZero",calZero); Serial.printf("[CAL] Set 0m=%f\n",calZero); server.sendHeader("Location","/"); server.send(303);}
+void handleCal2() { calTwoM=analogRead(ADC_PIN); prefs.putFloat("calTwoM",calTwoM); Serial.printf("[CAL] Set 2m=%f\n",calTwoM); server.sendHeader("Location","/"); server.send(303);}
+void handleClearCal() { calZero=0; calTwoM=4095; prefs.putFloat("calZero",calZero); prefs.putFloat("calTwoM",calTwoM); Serial.println("[CAL] Cleared calibration"); server.sendHeader("Location","/"); server.send(303);}
+void handleReset() { createFreshCSV(); Serial.println("[FS] Logs cleared"); server.sendHeader("Location","/"); server.send(303);}
+void handleClearCreds() { prefs.clear(); Serial.println("[CFG] Cleared credentials"); server.send(200,"text/html","<p>Credentials cleared. Rebooting...</p>"); delay(2000); ESP.restart();}
+void handleSaveWiFi() {
+  if (server.hasArg("ssid") && server.hasArg("pass") && server.hasArg("api")) {
+    wifiSSID=server.arg("ssid"); wifiPASS=server.arg("pass"); apiKey=server.arg("api");
+    prefs.putString("ssid",wifiSSID); prefs.putString("pass",wifiPASS); prefs.putString("api",apiKey);
+    Serial.printf("[CFG] Saved SSID='%s', pass len=%d, API len=%d\n",wifiSSID.c_str(),wifiPASS.length(),apiKey.length());
+    server.send(200,"text/html","<p>Saved! Rebooting...</p>"); delay(2000); ESP.restart();
+  } else { server.send(400,"text/plain","Missing fields"); }
+}
+
+// --- Setup ---
+void setup() {
+  Serial.begin(115200);
+  Serial2Port.begin(9600, SERIAL_8N1, 16, 17);
+
+  esp_sleep_wakeup_cause_t wakeup_reason = esp_sleep_get_wakeup_cause();
+  Serial.print("[SYS] Wakeup reason: ");
+  if (wakeup_reason == ESP_SLEEP_WAKEUP_TIMER) Serial.println("Timer");
+  else if (wakeup_reason == ESP_SLEEP_WAKEUP_UNDEFINED) Serial.println("PowerOn/Reset");
+  else Serial.println((int)wakeup_reason);
+
+  pinMode(ONE_WIRE_BUS, INPUT_PULLUP);
+  sensors.begin();
+  Serial.println("[TEMP] Dallas sensor initialized");
+
+  prefs.begin("depthlogger", false);
+  calZero=prefs.getFloat("calZero",0.0); calTwoM=prefs.getFloat("calTwoM",4095.0);
+  wifiSSID=prefs.getString("ssid",""); wifiPASS=prefs.getString("pass",""); apiKey=prefs.getString("api","");
+  Serial.printf("[CFG] Calibration: Zero=%.1f, TwoM=%.1f\n",calZero,calTwoM);
+  Serial.printf("[CFG] WiFi SSID='%s', pass len=%d, API key len=%d\n",wifiSSID.c_str(),wifiPASS.length(),apiKey.length());
+
+  WiFi.mode(WIFI_AP_STA);
+  WiFi.softAP(AP_SSID, AP_PASS);
+  Serial.printf("[NET] AP started: SSID='%s' PASS='%s' IP=%s\n",AP_SSID,AP_PASS,WiFi.softAPIP().toString().c_str());
+
+  if (wifiSSID!="") {
+    Serial.printf("[NET] Trying STA connect to '%s'...\n",wifiSSID.c_str());
+    WiFi.begin(wifiSSID.c_str(), wifiPASS.c_str());
+    unsigned long startAttempt=millis();
+    while(WiFi.status()!=WL_CONNECTED && millis()-startAttempt<10000){ delay(500); Serial.print("."); }
+    if(WiFi.status()==WL_CONNECTED) Serial.printf("\n[NET] STA connected, IP=%s\n",WiFi.localIP().toString().c_str());
+    else Serial.println("\n[NET] STA connect failed");
+  }
+
+  server.on("/",handleRoot);
+  server.on("/cal0",handleCal0);
+  server.on("/cal2",handleCal2);
+  server.on("/clearcal",handleClearCal);
+  server.on("/reset",handleReset);
+  server.on("/clearcreds",handleClearCreds);
+  server.on("/savewifi",HTTP_POST,handleSaveWiFi);
+  server.begin(); Serial.println("[WEB] Server started");
+
+  configTime(0,0,ntpServer); setenv("TZ",tzRule,1); tzset();
+  Serial.println("[TIME] Syncing time...");
+  struct tm timeinfo; if(getLocalTime(&timeinfo)) Serial.printf("[TIME] Current %02d:%02d:%02d\n",timeinfo.tm_hour,timeinfo.tm_min,timeinfo.tm_sec);
+  else Serial.println("[TIME] Failed to get time!");
+
+  if(!LittleFS.begin()) createFreshCSV();
+
+  if(getLocalTime(&timeinfo) && timeinfo.tm_min==0){ 
+    Serial.println("[LOG] Top of hour, logging now"); 
+    appendRow(); uploadToNeocities(); 
+  }
+}
+
+// --- Loop ---
+void loop() {
+  server.handleClient();
+
+  static bool sleepArmed=false; static unsigned long awakeStart=millis();
+  static unsigned long lastReport=0;
+
+  if(millis()-lastReport>10000){ 
+    lastReport=millis(); 
+    float depth=readDepth(); float tempC=readTemperature();
+    Serial.printf("[SYS] Uptime=%lus, awake left=%lus | Depth=%.2fm | Temp=%.2fC\n",
+                  millis()/1000,(120000-(millis()-awakeStart))/1000,depth,tempC);
+  }
+
+  if(!sleepArmed && millis()-awakeStart>120000){
+    sleepArmed=true; Serial.println("[SYS] Awake window ended, preparing to sleep...");
+
+    WiFi.disconnect(true); WiFi.mode(WIFI_OFF); btStop(); delay(100);
+    Serial.println("[NET] WiFi and BT shut down");
+
+    struct tm timeinfo; getLocalTime(&timeinfo);
+    int secsPast=timeinfo.tm_min*60+timeinfo.tm_sec; int secsToHour=3600-secsPast;
+    int sleepSecs=secsToHour-120; if(sleepSecs<10) sleepSecs=10;
+    Serial.printf("[SYS] Sleeping for %d sec, will wake at ~%02d:%02d\n",
+                  sleepSecs,(timeinfo.tm_hour+(timeinfo.tm_min+sleepSecs/60)/60)%24,
+                  (timeinfo.tm_min+sleepSecs/60)%60);
+
+    esp_sleep_enable_timer_wakeup((uint64_t)sleepSecs*1000000ULL);
+    esp_deep_sleep_start();
+  }
+}
