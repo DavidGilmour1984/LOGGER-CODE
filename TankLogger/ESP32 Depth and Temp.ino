@@ -23,11 +23,15 @@ Preferences prefs;
 // Calibration (raw ADC at 0 m and at 2 m)
 float  calZero  = 0.0f;
 float  calTwoM  = 4095.0f;
+// Store last valid temperature
+float lastValidTemp = NAN;
+float tempSum = 0.0;
+int   tempCount = 0;
 
 // Credentials & API (defaults)
 String wifiSSID = "G2.4";
-String wifiPASS = "";
-String apiKey   = "";
+String wifiPASS = "DhH2TuTYRVtQgYLF";
+String apiKey   = "8841216e260eef9d5883dd8f6da93ffd";
 
 // File names (defaults)
 String localFile  = "/data.csv";              // LittleFS path
@@ -54,7 +58,7 @@ void logBothln(const String &msg){ Serial.println(msg); Serial2Port.println(msg)
 
 String currentTimestamp() {
   struct tm timeinfo;
-  if (!getLocalTime(&timeinfo)) return "1970-01-01 00:00:00";
+  if (!getLocalTime(&timeinfo)) return "";
   char buf[25];
   strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", &timeinfo);
   return String(buf);
@@ -69,37 +73,79 @@ float readDepth() {
   return depth;
 }
 
-float readTemperature() {
+// Take one sample and decide if it's valid
+void sampleTemperature() {
   sensors.requestTemperatures();
   float t = sensors.getTempCByIndex(0);
-  if (t == DEVICE_DISCONNECTED_C) {
+
+  if (t == DEVICE_DISCONNECTED_C || isnan(t)) {
     Serial.println("[TEMP] Error: DS18B20 not found");
-    return NAN;
+    return; // skip this reading
   }
-  return t;
+
+  // First valid reading after boot/awake
+  if (isnan(lastValidTemp)) {
+    lastValidTemp = t;
+    tempSum = t;
+    tempCount = 1;
+    Serial.printf("[TEMP] First valid: %.2f C\n", t);
+    return;
+  }
+
+  // Accept if close enough
+  if (fabs(t - lastValidTemp) <= 1.0) {
+    lastValidTemp = t; // update baseline
+    tempSum += t;
+    tempCount++;
+    Serial.printf("[TEMP] Accepted %.2f C (count=%d, avg=%.2f)\n",
+                  t, tempCount, tempSum / tempCount);
+  } else {
+    Serial.printf("[TEMP] Rejected outlier: %.2f C (last=%.2f)\n", t, lastValidTemp);
+  }
 }
+
+// Return the average of all valid readings so far
+float readTemperature() {
+  if (tempCount == 0) {
+    return lastValidTemp; // fallback
+  }
+  return tempSum / tempCount;
+}
+
+// Reset stats at start of each awake window
+void resetTemperatureStats() {
+  tempSum = 0.0;
+  tempCount = 0;
+}
+
 
 // ---------- LittleFS ----------
 bool createFreshCSV() {
-  Serial.println("[FS] Creating fresh CSV file...");
+  Serial.println("[FS] Ensuring CSV file exists...");
   if (!LittleFS.begin(false)) {
     if (!LittleFS.begin(true)) {
       Serial.println("[FS] Mount failed");
       return false;
     }
   }
-  LittleFS.format();
-  LittleFS.begin(false);
 
   if (!localFile.startsWith("/")) localFile = "/" + localFile;
 
-  File f = LittleFS.open(localFile, FILE_WRITE);
-  if (!f) { Serial.printf("[FS] Failed to create %s\n", localFile.c_str()); return false; }
-  f.print(CSV_HEADER);
-  f.close();
-  Serial.printf("[FS] New %s created with header\n", localFile.c_str());
+  if (!LittleFS.exists(localFile)) {
+    File f = LittleFS.open(localFile, FILE_WRITE);
+    if (!f) { 
+      Serial.printf("[FS] Failed to create %s\n", localFile.c_str()); 
+      return false; 
+    }
+    f.print(CSV_HEADER);
+    f.close();
+    Serial.printf("[FS] New %s created with header\n", localFile.c_str());
+  } else {
+    Serial.printf("[FS] %s already exists, keeping data\n", localFile.c_str());
+  }
   return true;
 }
+
 
 void appendRow() {
   if (!LittleFS.begin(false)) {
@@ -110,26 +156,41 @@ void appendRow() {
   File f = LittleFS.open(localFile, FILE_APPEND);
   if (!f) return;
 
+  String ts = currentTimestamp();
+  if (ts == "") {
+    Serial.println("[FS] Skipping row: no valid timestamp");
+    return;
+  }
+
   float depth = readDepth();
   float tempC = readTemperature();
-  String row = currentTimestamp() + "," + String(depth, 2) + "," + String(tempC, 2) + "\n";
+
+  String row = ts + "," + String(depth, 2) + "," + String(tempC, 2) + "\n";
   f.print(row);
   f.close();
 
   Serial.printf("[FS] Wrote row: %s", row.c_str());
 }
 
+
 void appendRowAndUpload() {
+  // 🔹 Send to OpenLog only when uploading
+float d = readDepth();
+float t = readTemperature();
+String logRow = currentTimestamp() + "," + String(d, 2) + "," + String(t, 2) + "\n";
+Serial2Port.print(logRow);
+
   appendRow();
   uploadToNeocities();
 }
 
 // ---------- Upload ----------
 bool uploadToNeocities() {
-  if (apiKey == "") {
+if (apiKey.length() == 0) {
     Serial.println("[NET] No API key set, skipping upload.");
     return false;
-  }
+}
+
   if (!LittleFS.begin(false)) {
     if (!LittleFS.begin(true)) return false;
   }
@@ -280,8 +341,8 @@ void handleResetLogs(){
 void handleClearCreds(){
   prefs.clear();
   wifiSSID="G2.4";
-  wifiPASS="";
-  apiKey="";
+  wifiPASS="DhH2TuTYRVtQgYLF";
+  apiKey="8841216e260eef9d5883dd8f6da93ffd";
   localFile="/data.csv";
   remoteFile="TankLogger/data.csv";
   Serial.println("[CFG] Preferences cleared, defaults restored");
@@ -301,8 +362,8 @@ void setup(){
   calZero=prefs.getFloat("calZero",0.0);
   calTwoM=prefs.getFloat("calTwoM",4095.0);
   wifiSSID=prefs.getString("ssid","G2.4");
-  wifiPASS=prefs.getString("pass","");
-  apiKey=prefs.getString("api","");
+  wifiPASS=prefs.getString("pass","DhH2TuTYRVtQgYLF");
+  apiKey=prefs.getString("api","8841216e260eef9d5883dd8f6da93ffd");
   localFile=prefs.getString("localFile","/data.csv");
   remoteFile=prefs.getString("remoteFile","TankLogger/data.csv");
 
@@ -357,9 +418,15 @@ void setup(){
   } else {
     Serial.println("[FS] LittleFS mounted OK");
   }
+
+  // 🔹 Reset temperature stats at startup
+  resetTemperatureStats();
 }
 
 void loop(){
+  // 🔹 Continuously sample temperature while awake
+  sampleTemperature();
+
   server.handleClient();
 
   static bool didTopOfHour=false;
@@ -367,16 +434,17 @@ void loop(){
   static unsigned long lastReport=0;
   static unsigned long lastClientCheck=0;
 
-  if(millis()-lastReport>5000){
-    lastReport=millis();
-    float d=readDepth();
-    float t=readTemperature();
-    long uptime = millis()/1000;
-    long left=(long)(120000-(millis()-awakeStart))/1000;
-    if(left<0) left=0;
-    Serial.printf("[SYS] Uptime=%lus, awake left=%lds | Depth=%.2fm Temp=%.2fC\n",
-                  uptime, left, d, t);
-  }
+if(millis()-lastReport>5000){
+  lastReport=millis();
+  float d=readDepth();
+  float t=readTemperature();
+  long uptime = millis()/1000;
+  long left=(long)(120000-(millis()-awakeStart))/1000;
+  if(left<0) left=0;
+  Serial.printf("[SYS] Uptime=%lus, awake left=%lds | Depth=%.2fm Temp=%.2fC\n",
+                uptime, left, d, t);
+}
+
 
   struct tm ti;
   if(!didTopOfHour && getLocalTime(&ti)){
@@ -387,40 +455,43 @@ void loop(){
     }
   }
 
-  if(millis()-lastClientCheck>15000){
-    lastClientCheck=millis();
-    wl_status_t st = WiFi.status();
-    if(st==WL_CONNECTED){
-      Serial.printf("[NET] STA connected IP=%s RSSI=%d\n", WiFi.localIP().toString().c_str(), WiFi.RSSI());
-    } else {
-      Serial.printf("[NET] STA not connected (status=%d)\n", st);
-    }
+ if(millis()-awakeStart>120000){
+  Serial.println("[SYS] Awake window ended, preparing to sleep...");
+
+  // 🔹 Reset stats for next awake period
+  resetTemperatureStats();
+
+  // 🔹 Reset hourly flag for next cycle
+  didTopOfHour = false;
+
+  WiFi.disconnect(true); 
+  WiFi.mode(WIFI_OFF); 
+  btStop();
+  delay(100);
+  Serial.println("[NET] WiFi + BT shut down");
+
+  struct tm timeinfo; 
+  getLocalTime(&timeinfo);
+  int secsPast=timeinfo.tm_min*60+timeinfo.tm_sec;
+  int secsToHour=3600-secsPast;
+  int sleepSecs=secsToHour-120; 
+  if(sleepSecs<10) sleepSecs=10;
+
+  Serial.printf("[SYS] Will sleep for %d seconds\n", sleepSecs);
+  Serial.printf("[SYS] Expected wake-up around %02d:%02d\n",
+                (timeinfo.tm_hour + (timeinfo.tm_min + sleepSecs/60)/60)%24,
+                (timeinfo.tm_min + sleepSecs/60)%60);
+
+  for(int i=10;i>0;i--){
+    Serial.printf("[SYS] Entering deep sleep in %d...\n", i);
+    delay(1000);
   }
-
-  if(millis()-awakeStart>120000){
-    Serial.println("[SYS] Awake window ended, preparing to sleep...");
-    WiFi.disconnect(true); WiFi.mode(WIFI_OFF); btStop();
-    delay(100);
-    Serial.println("[NET] WiFi + BT shut down");
-
-    struct tm timeinfo; getLocalTime(&timeinfo);
-    int secsPast=timeinfo.tm_min*60+timeinfo.tm_sec;
-    int secsToHour=3600-secsPast;
-    int sleepSecs=secsToHour-120; 
-    if(sleepSecs<10) sleepSecs=10;
-
-    Serial.printf("[SYS] Will sleep for %d seconds\n", sleepSecs);
-    Serial.printf("[SYS] Expected wake-up around %02d:%02d\n",
-                  (timeinfo.tm_hour + (timeinfo.tm_min + sleepSecs/60)/60)%24,
-                  (timeinfo.tm_min + sleepSecs/60)%60);
-
-    for(int i=10;i>0;i--){
-      Serial.printf("[SYS] Entering deep sleep in %d...\n", i);
-      delay(1000);
-    }
 
     esp_sleep_enable_timer_wakeup((uint64_t)sleepSecs*1000000ULL);
     Serial.println("[SYS] Going into deep sleep now!");
     esp_deep_sleep_start();
   }
-}
+} // <-- final closing brace for loop()
+
+
+
