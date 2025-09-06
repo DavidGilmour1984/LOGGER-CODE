@@ -30,8 +30,8 @@ int   tempCount = 0;
 
 // Credentials & API (defaults)
 String wifiSSID = "G2.4";
-String wifiPASS = "DhH2TuTYRVtQgYLF";
-String apiKey   = "8841216e260eef9d5883dd8f6da93ffd";
+String wifiPASS = "PASSWORDPASSWORD";
+String apiKey   = "APIAPIAPIAPIAPI";
 
 // File names (defaults)
 String localFile  = "/data.csv";              // LittleFS path
@@ -313,9 +313,9 @@ void handleClearCal(){ calZero=0; calTwoM=4095; prefs.putFloat("calZero",calZero
 void handleSetSSID(){ if(server.hasArg("value")){ wifiSSID=server.arg("value"); prefs.putString("ssid",wifiSSID);} server.sendHeader("Location","/"); server.send(303);}
 void handleResetSSID(){ wifiSSID="G2.4"; prefs.putString("ssid",wifiSSID); server.sendHeader("Location","/"); server.send(303);}
 void handleSetPASS(){ if(server.hasArg("value")){ wifiPASS=server.arg("value"); prefs.putString("pass",wifiPASS);} server.sendHeader("Location","/"); server.send(303);}
-void handleResetPASS(){ wifiPASS="DhH2TuTYRVtQgYLF"; prefs.putString("pass",wifiPASS); server.sendHeader("Location","/"); server.send(303);}
+void handleResetPASS(){ wifiPASS="PASSWORDPASSWORD"; prefs.putString("pass",wifiPASS); server.sendHeader("Location","/"); server.send(303);}
 void handleSetAPI(){ if(server.hasArg("value")){ apiKey=server.arg("value"); prefs.putString("api",apiKey);} server.sendHeader("Location","/"); server.send(303);}
-void handleResetAPI(){ apiKey="8841216e260eef9d5883dd8f6da93ffd"; prefs.putString("api",apiKey); server.sendHeader("Location","/"); server.send(303);}
+void handleResetAPI(){ apiKey="APIAPIAPIAPIAPI"; prefs.putString("api",apiKey); server.sendHeader("Location","/"); server.send(303);}
 void handleSetLocal(){ if(server.hasArg("value")){ localFile=server.arg("value"); prefs.putString("localFile",localFile);} server.sendHeader("Location","/"); server.send(303);}
 void handleResetLocal(){ localFile="/data.csv"; prefs.putString("localFile",localFile); server.sendHeader("Location","/"); server.send(303);}
 void handleSetRemote(){ if(server.hasArg("value")){ remoteFile=server.arg("value"); prefs.putString("remoteFile",remoteFile);} server.sendHeader("Location","/"); server.send(303);}
@@ -341,8 +341,8 @@ void handleResetLogs(){
 void handleClearCreds(){
   prefs.clear();
   wifiSSID="G2.4";
-  wifiPASS="DhH2TuTYRVtQgYLF";
-  apiKey="8841216e260eef9d5883dd8f6da93ffd";
+  wifiPASS="PASSWORDPASSWORD";
+  apiKey="APIAPIAPIAPIAPI";
   localFile="/data.csv";
   remoteFile="TankLogger/data.csv";
   Serial.println("[CFG] Preferences cleared, defaults restored");
@@ -362,8 +362,8 @@ void setup(){
   calZero=prefs.getFloat("calZero",0.0);
   calTwoM=prefs.getFloat("calTwoM",4095.0);
   wifiSSID=prefs.getString("ssid","G2.4");
-  wifiPASS=prefs.getString("pass","DhH2TuTYRVtQgYLF");
-  apiKey=prefs.getString("api","8841216e260eef9d5883dd8f6da93ffd");
+  wifiPASS=prefs.getString("pass","PASSWORDPASSWORD");
+  apiKey=prefs.getString("api","APIAPIAPIAPIAPI");
   localFile=prefs.getString("localFile","/data.csv");
   remoteFile=prefs.getString("remoteFile","TankLogger/data.csv");
 
