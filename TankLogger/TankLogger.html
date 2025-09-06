@@ -27,11 +27,24 @@ href='data:image/svg+xml;utf8,
   :root {
     --bg:#0e1726; --panel:rgba(255,255,255,0.05); --ink:#f5f9ff;
     --muted:#b0c4de; --accent1:#00e5ff; --accent2:#4facfe;
-    --good:#39d98a; --bad:#ff6b6b;
+    --good:#39d98a; --bad:#ff6b6b; --pos:#00e5ff; --neg:#ff6b6b;
   }
   *{box-sizing:border-box}
-  body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 Helvetica,Arial,sans-serif}
-  .wrap{max-width:1400px;margin:auto;padding:20px}
+  html, body {
+    max-width: 100%;
+    overflow-x: hidden;
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font: 15px/1.5 Helvetica, Arial, sans-serif;
+  }
+
+  .wrap {
+    max-width: 1400px;
+    margin: auto;
+    padding: 20px;
+  }
+
   header{display:flex;justify-content:space-between;align-items:center;margin-bottom:24px;flex-wrap:wrap;gap:10px}
   .brand{display:flex;align-items:center;gap:10px}
   .logo{width:28px;height:28px;border-radius:50%;background:linear-gradient(135deg,var(--accent1),var(--accent2));
@@ -44,20 +57,36 @@ href='data:image/svg+xml;utf8,
   .badge.ok{border-color:var(--good);color:var(--good)}
   .badge.err{border-color:var(--bad);color:var(--bad)}
 
-  .card{background:var(--panel);border-radius:16px;backdrop-filter:blur(12px);
-        border:1px solid rgba(255,255,255,0.08);box-shadow:0 10px 28px rgba(0,0,0,.35)}
+  .card {
+    background: var(--panel);
+    border-radius: 16px;
+    backdrop-filter: blur(12px);
+    border: 1px solid rgba(255,255,255,0.08);
+    box-shadow: 0 10px 28px rgba(0,0,0,.35);
+    width: 100%;
+    max-width: 100%;
+    overflow-x: auto;
+  }
   .pad{padding:18px}
   .shell{display:grid;grid-template-columns:60% 40%;gap:20px}
-  @media (max-width: 950px){.shell{grid-template-columns:1fr}}
-  .tableWrap{max-height:520px;overflow:auto;border-radius:12px}
-  table{width:100%;border-collapse:collapse}
+
+  @media (max-width: 950px){
+    .shell{grid-template-columns:1fr}
+    .card{width:100%; margin:10px 0;}
+  }
+
+  .tableWrap{max-height:520px;overflow:auto;border-radius:12px;width:100%;max-width:100%}
+  table{width:100%;max-width:100%;border-collapse:collapse;font-size:14px;}
   thead th{position:sticky;top:0;background:rgba(255,255,255,0.05);backdrop-filter:blur(10px);color:#c8d5e6;font-weight:600}
-  th,td{padding:10px;border-bottom:1px solid rgba(255,255,255,0.08)}
+  th,td{padding:8px;border-bottom:1px solid rgba(255,255,255,0.08);text-align:center}
   tbody tr:hover{background:rgba(255,255,255,0.05)}
-  .chartBox{height:520px;padding:12px}
+  .chartBox{height:520px;padding:12px;width:100%;max-width:100%}
+  canvas{width:100% !important;max-width:100% !important}
   label{color:var(--muted);font-size:0.85rem}
   input[type="date"]{background:rgba(255,255,255,0.1);border:none;border-radius:8px;padding:4px 8px;color:var(--ink)}
-  .dateField {width: 120px;}
+  .dateField {width:120px;}
+  .pos{color:var(--pos);font-weight:bold}
+  .neg{color:var(--neg);font-weight:bold}
 </style>
 </head>
 <body>
@@ -72,8 +101,8 @@ href='data:image/svg+xml;utf8,
       <span id="connBadge" class="badge">Connecting…</span>
       <button class="badge" onclick="downloadTable()">Download Data</button>
       <div class="right-side">
-          <label>From <input type="date" id="startDate" class="dateField"></label>
-          <label>To <input type="date" id="endDate" class="dateField"></label>
+        <label>From <input type="date" id="startDate" class="dateField"></label>
+        <label>To <input type="date" id="endDate" class="dateField"></label>
         <button class="badge" onclick="applyFilter()">Apply</button>
       </div>
     </div>
@@ -88,11 +117,10 @@ href='data:image/svg+xml;utf8,
         <table id="dataTable">
           <thead>
             <tr>
-              <th>Timestamp</th>
+              <th>Date/Time</th>
               <th>Volume (L)</th>
               <th>Temp (°C)</th>
-              <th>Net Use (L)</th>
-              <th>Net Gain (L)</th>
+              <th>Net Change (L)</th>
               <th>Rain (mm/hr)</th>
             </tr>
           </thead>
@@ -107,15 +135,13 @@ href='data:image/svg+xml;utf8,
 const CSV_URL="https://dcgcode.neocities.org/TankLogger/data.csv";
 let allData=[];
 
-// Tank + roof constants
-const DIAMETER = 3.61;                
-const RADIUS = DIAMETER/2;
-const ROOF_AREA = 200;                
-const NOISE_THRESHOLD = 10;           
+const DIAMETER=3.61;
+const RADIUS=DIAMETER/2;
+const ROOF_AREA=200;
+const NOISE_THRESHOLD=10;
 
-// Depth → Volume (L)
 function depthToVolume(depthM){
-  return Math.PI * RADIUS * RADIUS * depthM * 1000;
+  return Math.PI*RADIUS*RADIUS*depthM*1000;
 }
 
 const ctx=document.getElementById('chart').getContext('2d');
@@ -150,16 +176,14 @@ async function poll(){
     const rows=(await res.text()).trim().split('\n').slice(1);
     allData=rows.map(r=>{
       const[ts,depth,temp]=r.split(',');
-      const depthM = (isNaN(+depth)?null:+depth);
+      const depthM=(isNaN(+depth)?null:+depth);
       return {
         ts:new Date(ts.replace(' ','T')),
         depth:depthM,
-        volume:(depthM!==null ? depthToVolume(depthM) : null),
+        volume:(depthM!==null?depthToVolume(depthM):null),
         temp:(isNaN(+temp)?null:+temp)
       };
-    })
-    // ✅ Ignore invalid rows and anything before 2020
-    .filter(d=>(d.volume!==null || d.temp!==null) && d.ts.getFullYear() >= 2020);
+    }).filter(d=>(d.volume!==null||d.temp!==null)&&d.ts.getFullYear()>=2020);
 
     applyFilter();
     document.getElementById('connBadge').textContent="Live";
@@ -171,13 +195,22 @@ async function poll(){
   }
 }
 
+function formatDateShort(date){
+  let d=date.getDate().toString().padStart(2,'0');
+  let m=(date.getMonth()+1).toString().padStart(2,'0');
+  let y=date.getFullYear().toString().slice(-2);
+  let hh=date.getHours().toString().padStart(2,'0');
+  let mm=date.getMinutes().toString().padStart(2,'0');
+  return `${d}/${m}/${y} ${hh}:${mm}`;
+}
+
 function applyFilter(){
   let start=new Date(document.getElementById('startDate').value);
   let end=new Date(document.getElementById('endDate').value);
   if(isNaN(start)) start=new Date(-8640000000000000);
   if(isNaN(end)) end=new Date(8640000000000000);
 
-  const filtered=allData.filter(d=>d.ts>=start && d.ts<=end);
+  const filtered=allData.filter(d=>d.ts>=start&&d.ts<=end);
 
   chart.data.datasets[0].data=filtered.filter(d=>d.volume!==null).map(d=>({x:d.ts,y:d.volume}));
   chart.data.datasets[1].data=filtered.filter(d=>d.temp!==null).map(d=>({x:d.ts,y:d.temp}));
@@ -186,19 +219,19 @@ function applyFilter(){
   const tbody=document.getElementById('tbody');
   tbody.innerHTML='';
 
-  filtered.slice().reverse().forEach((d, idx, arr)=>{
-    let netUse="", netGain="", rain="";
-    if(idx < arr.length-1){
-      const prev = arr[idx+1]; 
-      const dt = (d.ts - prev.ts)/1000/60; 
-      if(dt > 30 && dt < 90 && prev.volume!==null && d.volume!==null){
-        const diff = d.volume - prev.volume;
-        if(Math.abs(diff) > NOISE_THRESHOLD){
-          if(diff < 0){
-            netUse = (-diff).toFixed(0);
-          }else{
-            netGain = diff.toFixed(0);
-            rain = (diff / ROOF_AREA).toFixed(1);
+  filtered.slice().reverse().forEach((d,idx,arr)=>{
+    let netChange="",rain="";
+    if(idx<arr.length-1){
+      const prev=arr[idx+1];
+      const dt=(d.ts-prev.ts)/1000/60;
+      if(dt>30&&dt<90&&prev.volume!==null&&d.volume!==null){
+        const diff=d.volume-prev.volume;
+        if(Math.abs(diff)>NOISE_THRESHOLD){
+          netChange=(diff>0)
+            ? `<span class="pos">+${diff.toFixed(0)}</span>`
+            : `<span class="neg">${diff.toFixed(0)}</span>`;
+          if(diff>0){
+            rain=(diff/ROOF_AREA).toFixed(1);
           }
         }
       }
@@ -206,29 +239,28 @@ function applyFilter(){
 
     tbody.insertAdjacentHTML('beforeend',
       `<tr>
-         <td>${d.ts.toLocaleString()}</td>
-         <td>${d.volume!==null ? d.volume.toFixed(0) : ''}</td>
-         <td>${d.temp!==null ? d.temp.toFixed(2) : ''}</td>
-         <td>${netUse}</td>
-         <td>${netGain}</td>
+         <td>${formatDateShort(d.ts)}</td>
+         <td>${d.volume!==null?d.volume.toFixed(0):''}</td>
+         <td>${d.temp!==null?d.temp.toFixed(1):''}</td>
+         <td>${netChange}</td>
          <td>${rain}</td>
        </tr>`);
   });
 }
 
 function downloadTable(){
-  const rows = [];
-  const table = document.getElementById("dataTable");
-  for (const tr of table.querySelectorAll("tr")) {
-    const cells = [...tr.querySelectorAll("th,td")].map(td => `"${td.innerText}"`);
+  const rows=[];
+  const table=document.getElementById("dataTable");
+  for(const tr of table.querySelectorAll("tr")){
+    const cells=[...tr.querySelectorAll("th,td")].map(td=>`"${td.innerText}"`);
     rows.push(cells.join(","));
   }
-  const csvContent = rows.join("\n");
-  const blob = new Blob([csvContent], { type: "text/csv" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = "tanklogger_filtered.csv";
+  const csvContent=rows.join("\n");
+  const blob=new Blob([csvContent],{type:"text/csv"});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement("a");
+  a.href=url;
+  a.download="tanklogger_filtered.csv";
   a.click();
   URL.revokeObjectURL(url);
 }
