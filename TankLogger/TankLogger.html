@@ -57,9 +57,7 @@ href='data:image/svg+xml;utf8,
   .chartBox{height:520px;padding:12px}
   label{color:var(--muted);font-size:0.85rem}
   input[type="date"]{background:rgba(255,255,255,0.1);border:none;border-radius:8px;padding:4px 8px;color:var(--ink)}
-  .dateField {width: 120px;   /* smaller than the default */
-}
-
+  .dateField {width: 120px;}
 </style>
 </head>
 <body>
@@ -110,10 +108,10 @@ const CSV_URL="https://dcgcode.neocities.org/TankLogger/data.csv";
 let allData=[];
 
 // Tank + roof constants
-const DIAMETER = 3.61;                // m, internal diameter
+const DIAMETER = 3.61;                
 const RADIUS = DIAMETER/2;
-const ROOF_AREA = 200;                // m² catchment
-const NOISE_THRESHOLD = 10;           // litres (ignore smaller changes)
+const ROOF_AREA = 200;                
+const NOISE_THRESHOLD = 10;           
 
 // Depth → Volume (L)
 function depthToVolume(depthM){
@@ -159,7 +157,9 @@ async function poll(){
         volume:(depthM!==null ? depthToVolume(depthM) : null),
         temp:(isNaN(+temp)?null:+temp)
       };
-    }).filter(d=>d.volume!==null || d.temp!==null);
+    })
+    // ✅ Ignore invalid rows and anything before 2020
+    .filter(d=>(d.volume!==null || d.temp!==null) && d.ts.getFullYear() >= 2020);
 
     applyFilter();
     document.getElementById('connBadge').textContent="Live";
@@ -190,7 +190,7 @@ function applyFilter(){
     let netUse="", netGain="", rain="";
     if(idx < arr.length-1){
       const prev = arr[idx+1]; 
-      const dt = (d.ts - prev.ts)/1000/60; // minutes
+      const dt = (d.ts - prev.ts)/1000/60; 
       if(dt > 30 && dt < 90 && prev.volume!==null && d.volume!==null){
         const diff = d.volume - prev.volume;
         if(Math.abs(diff) > NOISE_THRESHOLD){
@@ -216,7 +216,6 @@ function applyFilter(){
   });
 }
 
-// Export currently visible table to CSV
 function downloadTable(){
   const rows = [];
   const table = document.getElementById("dataTable");
