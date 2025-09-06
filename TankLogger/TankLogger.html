@@ -38,13 +38,7 @@ href='data:image/svg+xml;utf8,
     color: var(--ink);
     font: 15px/1.5 Helvetica, Arial, sans-serif;
   }
-
-  .wrap {
-    max-width: 1400px;
-    margin: auto;
-    padding: 20px;
-  }
-
+  .wrap { max-width: 1400px; margin: auto; padding: 20px; }
   header{display:flex;justify-content:space-between;align-items:center;margin-bottom:24px;flex-wrap:wrap;gap:10px}
   .brand{display:flex;align-items:center;gap:10px}
   .logo{width:28px;height:28px;border-radius:50%;background:linear-gradient(135deg,var(--accent1),var(--accent2));
@@ -56,25 +50,11 @@ href='data:image/svg+xml;utf8,
   .badge{border:1px solid var(--muted);padding:4px 10px;border-radius:20px;color:var(--muted);font-size:0.85rem;text-decoration:none;cursor:pointer;background:none}
   .badge.ok{border-color:var(--good);color:var(--good)}
   .badge.err{border-color:var(--bad);color:var(--bad)}
-
-  .card {
-    background: var(--panel);
-    border-radius: 16px;
-    backdrop-filter: blur(12px);
-    border: 1px solid rgba(255,255,255,0.08);
-    box-shadow: 0 10px 28px rgba(0,0,0,.35);
-    width: 100%;
-    max-width: 100%;
-    overflow-x: auto;
-  }
+  .card {background: var(--panel);border-radius: 16px;backdrop-filter: blur(12px);border: 1px solid rgba(255,255,255,0.08);
+         box-shadow: 0 10px 28px rgba(0,0,0,.35);width: 100%;max-width: 100%;overflow-x: auto;}
   .pad{padding:18px}
   .shell{display:grid;grid-template-columns:60% 40%;gap:20px}
-
-  @media (max-width: 950px){
-    .shell{grid-template-columns:1fr}
-    .card{width:100%; margin:10px 0;}
-  }
-
+  @media (max-width: 950px){.shell{grid-template-columns:1fr}.card{width:100%; margin:10px 0;}}
   .tableWrap{max-height:520px;overflow:auto;border-radius:12px;width:100%;max-width:100%}
   table{width:100%;max-width:100%;border-collapse:collapse;font-size:14px;}
   thead th{position:sticky;top:0;background:rgba(255,255,255,0.05);backdrop-filter:blur(10px);color:#c8d5e6;font-weight:600}
@@ -118,8 +98,8 @@ href='data:image/svg+xml;utf8,
           <thead>
             <tr>
               <th>Date/Time</th>
-              <th>Volume (L)</th>
               <th>Temp (°C)</th>
+              <th>Volume (L)</th>
               <th>Net Change (L)</th>
               <th>Rain (mm/hr)</th>
             </tr>
@@ -138,7 +118,7 @@ let allData=[];
 const DIAMETER=3.61;
 const RADIUS=DIAMETER/2;
 const ROOF_AREA=200;
-const NOISE_THRESHOLD=10;
+const NOISE_THRESHOLD=102; // litres
 
 function depthToVolume(depthM){
   return Math.PI*RADIUS*RADIUS*depthM*1000;
@@ -156,7 +136,20 @@ const chart=new Chart(ctx,{
   options:{
     responsive:true,animation:{duration:600},maintainAspectRatio:false,
     scales:{
-      x:{type:'time',time:{unit:"minute"},grid:{color:'rgba(255,255,255,.07)'},ticks:{color:'#cdd8e7'}},
+      x:{
+        type:'time',
+        grid:{color:'rgba(255,255,255,.07)'},
+        time:{unit:'hour',stepSize:1},
+        ticks:{
+          color:'#cdd8e7',
+          maxRotation:90,minRotation:90,
+          callback:(val,idx,ticks)=>{
+            const d=new Date(ticks[idx].value);
+            return d.toLocaleString('en-NZ',{hour:'numeric',minute:'2-digit',hour12:true});
+          }
+        },
+        title:{display:true,text:'Time',color:'#cdd8e7'}
+      },
       y1:{type:'linear',position:'left',min:0,max:25000,
           grid:{color:'rgba(255,255,255,.07)'},
           ticks:{color:'#00e5ff'},
@@ -174,13 +167,25 @@ async function poll(){
   try{
     const res=await fetch(CSV_URL+'?'+Date.now(),{cache:'no-store'});
     const rows=(await res.text()).trim().split('\n').slice(1);
+
+    let lastAcceptedVolume=null;
     allData=rows.map(r=>{
       const[ts,depth,temp]=r.split(',');
       const depthM=(isNaN(+depth)?null:+depth);
+      let rawVol=(depthM!==null?depthToVolume(depthM):null);
+      let volume=null;
+
+      if(rawVol!==null){
+        if(lastAcceptedVolume===null || Math.abs(rawVol-lastAcceptedVolume)>NOISE_THRESHOLD){
+          lastAcceptedVolume=rawVol;
+        }
+        volume=lastAcceptedVolume; // use filtered
+      }
+
       return {
         ts:new Date(ts.replace(' ','T')),
         depth:depthM,
-        volume:(depthM!==null?depthToVolume(depthM):null),
+        volume:volume,
         temp:(isNaN(+temp)?null:+temp)
       };
     }).filter(d=>(d.volume!==null||d.temp!==null)&&d.ts.getFullYear()>=2020);
@@ -200,8 +205,7 @@ function formatDateShort(date){
   let m=(date.getMonth()+1).toString().padStart(2,'0');
   let y=date.getFullYear().toString().slice(-2);
   let hh=date.getHours().toString().padStart(2,'0');
-  let mm=date.getMinutes().toString().padStart(2,'0');
-  return `${d}/${m}/${y} ${hh}:${mm}`;
+  return `${d}/${m}/${y} ${hh}:00`;
 }
 
 function applyFilter(){
@@ -236,12 +240,11 @@ function applyFilter(){
         }
       }
     }
-
     tbody.insertAdjacentHTML('beforeend',
       `<tr>
          <td>${formatDateShort(d.ts)}</td>
-         <td>${d.volume!==null?d.volume.toFixed(0):''}</td>
          <td>${d.temp!==null?d.temp.toFixed(1):''}</td>
+         <td>${d.volume!==null?d.volume.toFixed(0):''}</td>
          <td>${netChange}</td>
          <td>${rain}</td>
        </tr>`);
