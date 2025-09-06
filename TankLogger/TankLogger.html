@@ -1,241 +1,32 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8" />
-<title>Tank Logger</title>
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<meta name="theme-color" content="#0e1726" />
+function applyFilter() {
+  let startInput = document.getElementById('startDate').value;
+  let endInput = document.getElementById('endDate').value;
 
-<link rel="icon" type="image/svg+xml"
-href='data:image/svg+xml;utf8,
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-  <defs>
-    <linearGradient id="g" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="%2300e5ff"/>
-      <stop offset="1" stop-color="%234facfe"/>
-    </linearGradient>
-  </defs>
-  <path fill="url(%23g)"
-        d="M32 4 C24 16 16 26 16 38 a16 16 0 1 0 32 0 c0-12-8-22-16-34z"/>
-  <circle cx="26" cy="22" r="4" fill="%23ffffff" fill-opacity=".30"/>
-</svg>'/>
+  let start = startInput ? new Date(startInput + "T01:00:00") : new Date(-8640000000000000);
+  let end = endInput ? new Date(endInput + "T23:59:59") : new Date(8640000000000000);
 
-<link rel="preconnect" href="https://cdn.jsdelivr.net">
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns"></script>
-<style>
-  :root {
-    --bg:#0e1726; --panel:rgba(255,255,255,0.05); --ink:#f5f9ff;
-    --muted:#b0c4de; --accent1:#00e5ff; --accent2:#4facfe;
-    --good:#39d98a; --bad:#ff6b6b; --pos:#00e5ff; --neg:#ff6b6b;
-  }
-  *{box-sizing:border-box}
-  html, body {
-    max-width: 100%;
-    overflow-x: hidden;
-    margin: 0;
-    background: var(--bg);
-    color: var(--ink);
-    font: 15px/1.5 Helvetica, Arial, sans-serif;
-  }
-  .wrap { max-width: 1400px; margin: auto; padding: 20px; }
-  header{display:flex;justify-content:space-between;align-items:center;margin-bottom:24px;flex-wrap:wrap;gap:10px}
-  .brand{display:flex;align-items:center;gap:10px}
-  .logo{width:28px;height:28px;border-radius:50%;background:linear-gradient(135deg,var(--accent1),var(--accent2));
-        display:flex;align-items:center;justify-content:center;color:#fff;font-weight:bold;font-size:18px;
-        box-shadow:0 0 12px var(--accent1)}
-  h1{margin:0;font-size:1.5rem;font-weight:600;letter-spacing:-0.5px}
-  .status{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
-  .status .right-side{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
-  .badge{border:1px solid var(--muted);padding:4px 10px;border-radius:20px;color:var(--muted);font-size:0.85rem;text-decoration:none;cursor:pointer;background:none}
-  .badge.ok{border-color:var(--good);color:var(--good)}
-  .badge.err{border-color:var(--bad);color:var(--bad)}
-  .card {background: var(--panel);border-radius: 16px;backdrop-filter: blur(12px);border: 1px solid rgba(255,255,255,0.08);
-         box-shadow: 0 10px 28px rgba(0,0,0,.35);width: 100%;max-width: 100%;overflow-x: auto;}
-  .pad{padding:18px}
-  .shell{display:grid;grid-template-columns:60% 40%;gap:20px}
-  @media (max-width: 950px){.shell{grid-template-columns:1fr}.card{width:100%; margin:10px 0;}}
-  .tableWrap{max-height:520px;overflow:auto;border-radius:12px;width:100%;max-width:100%}
-  table{width:100%;max-width:100%;border-collapse:collapse;font-size:14px;}
-  thead th{position:sticky;top:0;background:rgba(255,255,255,0.05);backdrop-filter:blur(10px);color:#c8d5e6;font-weight:600}
-  th,td{padding:8px;border-bottom:1px solid rgba(255,255,255,0.08);text-align:center}
-  tbody tr:hover{background:rgba(255,255,255,0.05)}
-  .chartBox{height:520px;padding:12px;width:100%;max-width:100%}
-  canvas{width:100% !important;max-width:100% !important}
-  label{color:var(--muted);font-size:0.85rem}
-  input[type="date"]{background:rgba(255,255,255,0.1);border:none;border-radius:8px;padding:4px 8px;color:var(--ink)}
-  .dateField {width:120px;}
-  .pos{color:var(--pos);font-weight:bold}
-  .neg{color:var(--neg);font-weight:bold}
-</style>
-</head>
-<body>
+  const filtered = allData.filter(d => d.ts >= start && d.ts <= end);
 
-<div class="wrap" id="app">
-  <header>
-    <div class="brand">
-      <div class="logo">💧</div>
-      <h1>Tank Logger</h1>
-    </div>
-    <div class="status">
-      <span id="connBadge" class="badge">Connecting…</span>
-      <button class="badge" onclick="downloadTable()">Download Data</button>
-      <div class="right-side">
-        <label>From <input type="date" id="startDate" class="dateField"></label>
-        <label>To <input type="date" id="endDate" class="dateField"></label>
-        <button class="badge" onclick="applyFilter()">Apply</button>
-      </div>
-    </div>
-  </header>
-
-  <div class="shell">
-    <div class="card chartBox">
-      <canvas id="chart"></canvas>
-    </div>
-    <div class="card pad">
-      <div class="tableWrap">
-        <table id="dataTable">
-          <thead>
-            <tr>
-              <th>Date/Time</th>
-              <th>Temp (°C)</th>
-              <th>Volume (L)</th>
-              <th>Net Change (L)</th>
-              <th>Rain (mm/hr)</th>
-            </tr>
-          </thead>
-          <tbody id="tbody"></tbody>
-        </table>
-      </div>
-    </div>
-  </div>
-</div>
-
-<script>
-const CSV_URL="https://dcgcode.neocities.org/TankLogger/data.csv";
-let allData=[];
-
-const DIAMETER=3.61;
-const RADIUS=DIAMETER/2;
-const ROOF_AREA=200;
-const NOISE_THRESHOLD=102; // litres
-
-function depthToVolume(depthM){
-  return Math.PI*RADIUS*RADIUS*depthM*1000;
-}
-
-const ctx=document.getElementById('chart').getContext('2d');
-const chart=new Chart(ctx,{
-  type:'line',
-  data:{datasets:[
-    {label:'Volume (L)',data:[],yAxisID:'y1',tension:0.25,pointRadius:2,borderWidth:2,
-     borderColor:'#00e5ff',backgroundColor:'rgba(0,229,255,0.25)'},
-    {label:'Temp (°C)',data:[],yAxisID:'y2',tension:0.25,pointRadius:2,borderWidth:2,
-     borderColor:'#ff6b6b',backgroundColor:'rgba(255,107,107,0.25)'}
-  ]},
-  options:{
-    responsive:true,animation:{duration:600},maintainAspectRatio:false,
-    scales:{
-      x:{
-        type:'time',
-        grid:{color:'rgba(255,255,255,.07)'},
-        time:{unit:'hour',stepSize:1},
-        ticks:{
-          color:'#cdd8e7',
-          maxRotation:90,minRotation:90,
-          callback:(val,idx,ticks)=>{
-            const d=new Date(ticks[idx].value);
-            return d.toLocaleString('en-NZ',{hour:'numeric',minute:'2-digit',hour12:true});
-          }
-        },
-        title:{display:true,text:'Time',color:'#cdd8e7'}
-      },
-      y1:{type:'linear',position:'left',min:0,max:25000,
-          grid:{color:'rgba(255,255,255,.07)'},
-          ticks:{color:'#00e5ff'},
-          title:{display:true,text:'Volume (L)',color:'#00e5ff'}},
-      y2:{type:'linear',position:'right',min:0,max:30,
-          grid:{drawOnChartArea:false},
-          ticks:{color:'#ff6b6b'},
-          title:{display:true,text:'Temp (°C)',color:'#ff6b6b'}}
-    },
-    plugins:{legend:{labels:{color:'#eaf6ff'}}}
-  }
-});
-
-async function poll(){
-  try{
-    const res=await fetch(CSV_URL+'?'+Date.now(),{cache:'no-store'});
-    const rows=(await res.text()).trim().split('\n').slice(1);
-
-    let lastAcceptedVolume=null;
-    allData=rows.map(r=>{
-      const[ts,depth,temp]=r.split(',');
-      const depthM=(isNaN(+depth)?null:+depth);
-      let rawVol=(depthM!==null?depthToVolume(depthM):null);
-      let volume=null;
-
-      if(rawVol!==null){
-        if(lastAcceptedVolume===null || Math.abs(rawVol-lastAcceptedVolume)>NOISE_THRESHOLD){
-          lastAcceptedVolume=rawVol;
-        }
-        volume=lastAcceptedVolume; // use filtered
-      }
-
-      return {
-        ts:new Date(ts.replace(' ','T')),
-        depth:depthM,
-        volume:volume,
-        temp:(isNaN(+temp)?null:+temp)
-      };
-    }).filter(d=>(d.volume!==null||d.temp!==null)&&d.ts.getFullYear()>=2020);
-
-    applyFilter();
-    document.getElementById('connBadge').textContent="Live";
-    document.getElementById('connBadge').className="badge ok";
-  }catch(err){
-    console.error(err);
-    document.getElementById('connBadge').textContent="Error";
-    document.getElementById('connBadge').className="badge err";
-  }
-}
-
-function formatDateShort(date){
-  let d=date.getDate().toString().padStart(2,'0');
-  let m=(date.getMonth()+1).toString().padStart(2,'0');
-  let y=date.getFullYear().toString().slice(-2);
-  let hh=date.getHours().toString().padStart(2,'0');
-  return `${d}/${m}/${y} ${hh}:00`;
-}
-
-function applyFilter(){
-  let start=new Date(document.getElementById('startDate').value);
-  let end=new Date(document.getElementById('endDate').value);
-  if(isNaN(start)) start=new Date(-8640000000000000);
-  if(isNaN(end)) end=new Date(8640000000000000);
-
-  const filtered=allData.filter(d=>d.ts>=start&&d.ts<=end);
-
-  chart.data.datasets[0].data=filtered.filter(d=>d.volume!==null).map(d=>({x:d.ts,y:d.volume}));
-  chart.data.datasets[1].data=filtered.filter(d=>d.temp!==null).map(d=>({x:d.ts,y:d.temp}));
+  chart.data.datasets[0].data = filtered.filter(d => d.volume !== null).map(d => ({ x: d.ts, y: d.volume }));
+  chart.data.datasets[1].data = filtered.filter(d => d.temp !== null).map(d => ({ x: d.ts, y: d.temp }));
   chart.update();
 
-  const tbody=document.getElementById('tbody');
-  tbody.innerHTML='';
+  const tbody = document.getElementById('tbody');
+  tbody.innerHTML = '';
 
-  filtered.slice().reverse().forEach((d,idx,arr)=>{
-    let netChange="",rain="";
-    if(idx<arr.length-1){
-      const prev=arr[idx+1];
-      const dt=(d.ts-prev.ts)/1000/60;
-      if(dt>30&&dt<90&&prev.volume!==null&&d.volume!==null){
-        const diff=d.volume-prev.volume;
-        if(Math.abs(diff)>NOISE_THRESHOLD){
-          netChange=(diff>0)
+  filtered.slice().reverse().forEach((d, idx, arr) => {
+    let netChange = "", rain = "";
+    if (idx < arr.length - 1) {
+      const prev = arr[idx + 1];
+      const dt = (d.ts - prev.ts) / 1000 / 60;
+      if (dt > 30 && dt < 90 && prev.volume !== null && d.volume !== null) {
+        const diff = d.volume - prev.volume;
+        if (Math.abs(diff) > NOISE_THRESHOLD) {
+          netChange = (diff > 0)
             ? `<span class="pos">+${diff.toFixed(0)}</span>`
             : `<span class="neg">${diff.toFixed(0)}</span>`;
-          if(diff>0){
-            rain=(diff/ROOF_AREA).toFixed(1);
+          if (diff > 0) {
+            rain = (diff / ROOF_AREA).toFixed(1);
           }
         }
       }
@@ -243,33 +34,10 @@ function applyFilter(){
     tbody.insertAdjacentHTML('beforeend',
       `<tr>
          <td>${formatDateShort(d.ts)}</td>
-         <td>${d.temp!==null?d.temp.toFixed(1):''}</td>
-         <td>${d.volume!==null?d.volume.toFixed(0):''}</td>
+         <td>${d.temp !== null ? d.temp.toFixed(1) : ''}</td>
+         <td>${d.volume !== null ? d.volume.toFixed(0) : ''}</td>
          <td>${netChange}</td>
          <td>${rain}</td>
        </tr>`);
   });
 }
-
-function downloadTable(){
-  const rows=[];
-  const table=document.getElementById("dataTable");
-  for(const tr of table.querySelectorAll("tr")){
-    const cells=[...tr.querySelectorAll("th,td")].map(td=>`"${td.innerText}"`);
-    rows.push(cells.join(","));
-  }
-  const csvContent=rows.join("\n");
-  const blob=new Blob([csvContent],{type:"text/csv"});
-  const url=URL.createObjectURL(blob);
-  const a=document.createElement("a");
-  a.href=url;
-  a.download="tanklogger_filtered.csv";
-  a.click();
-  URL.revokeObjectURL(url);
-}
-
-poll();
-setInterval(poll,10000);
-</script>
-</body>
-</html>
