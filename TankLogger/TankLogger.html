@@ -317,17 +317,39 @@ function downloadTable(){
 }
 
 // === Set default date range: last 7 days ===
+// === Set default date range: today and last 7 days in NZ timezone ===
 window.addEventListener("load", () => {
-  const today = new Date();
-  const lastWeek = new Date();
-  lastWeek.setDate(today.getDate() - 7);
+  const tz = "Pacific/Auckland";
 
-  document.getElementById("startDate").value = lastWeek.toISOString().split("T")[0];
-  document.getElementById("endDate").value = today.toISOString().split("T")[0];
+  function getNZDateString(date) {
+    // Format as YYYY-MM-DD in NZ timezone
+    return date.toLocaleDateString("en-CA", { timeZone: tz });
+  }
 
+  // Current date/time in NZ
+  const now = new Date();
+  const todayNZ = new Date(now.toLocaleString("en-US", { timeZone: tz }));
+
+  // Go back 7 days
+  const lastWeekNZ = new Date(todayNZ);
+  lastWeekNZ.setDate(todayNZ.getDate() - 7);
+
+  const todayStr = getNZDateString(todayNZ);
+  const lastWeekStr = getNZDateString(lastWeekNZ);
+
+  // Set calendar inputs
+  document.getElementById("startDate").value = lastWeekStr;
+  document.getElementById("endDate").value = todayStr;
+
+  // Ensure the filter uses these defaults
+  applyFilter();
+
+  // Start polling
   poll();
   setInterval(poll,10000);
 });
+
+
 </script>
 </body>
 </html>
