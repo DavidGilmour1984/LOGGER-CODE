@@ -64,7 +64,7 @@ href='data:image/svg+xml;utf8,
   canvas{width:100% !important;max-width:100% !important}
   label{color:var(--muted);font-size:0.85rem}
   input[type="date"]{background:rgba(255,255,255,0.1);border:none;border-radius:8px;padding:4px 8px;color:var(--ink)}
-  .dateField {width:120px;}
+  .dateField {width:150px;}
   .pos{color:var(--pos);font-weight:bold}
   .neg{color:var(--neg);font-weight:bold}
 </style>
@@ -134,34 +134,80 @@ const chart=new Chart(ctx,{
      borderColor:'#ff6b6b',backgroundColor:'rgba(255,107,107,0.25)'}
   ]},
   options:{
-    responsive:true,animation:{duration:600},maintainAspectRatio:false,
+    responsive:true,
+    animation:{duration:600},
+    maintainAspectRatio:false,
     scales:{
       x:{
         type:'time',
         grid:{color:'rgba(255,255,255,.07)'},
-        time:{unit:'hour',stepSize:1},
+        time:{
+          unit:'hour',
+          stepSize:1
+        },
         ticks:{
           color:'#cdd8e7',
-          maxRotation:90,minRotation:90,
+          maxRotation:90,
+          minRotation:90,
           callback:(val,idx,ticks)=>{
             const d=new Date(ticks[idx].value);
-            return d.toLocaleString('en-NZ',{hour:'numeric',minute:'2-digit',hour12:true});
+
+            // Only label even hours
+            if(d.getHours() % 2 !== 0) return null;
+
+            // Midnight → show date + time
+            if(d.getHours() === 0){
+              return d.toLocaleDateString('en-NZ',{
+                day:'2-digit',
+                month:'2-digit'
+              }) + " " +
+              d.toLocaleTimeString('en-NZ',{
+                hour:'2-digit',
+                minute:'2-digit',
+                hour12:false
+              });
+            }
+
+            // Other even hours → show just the time
+            return d.toLocaleTimeString('en-NZ',{
+              hour:'2-digit',
+              minute:'2-digit',
+              hour12:false
+            });
           }
         },
-        title:{display:true,text:'Time',color:'#cdd8e7'}
+        adapters:{
+          date:{ round:'hour' }
+        },
+        title:{display:true,text:'Date/Time',color:'#cdd8e7'}
       },
-      y1:{type:'linear',position:'left',min:0,max:25000,
-          grid:{color:'rgba(255,255,255,.07)'},
-          ticks:{color:'#00e5ff'},
-          title:{display:true,text:'Volume (L)',color:'#00e5ff'}},
-      y2:{type:'linear',position:'right',min:0,max:30,
-          grid:{drawOnChartArea:false},
-          ticks:{color:'#ff6b6b'},
-          title:{display:true,text:'Temp (°C)',color:'#ff6b6b'}}
+      y1:{
+        type:'linear',
+        position:'left',
+        min:0,
+        max:25000,
+        grid:{color:'rgba(255,255,255,.07)'},
+        ticks:{color:'#00e5ff'},
+        title:{display:true,text:'Volume (L)',color:'#00e5ff'}
+      },
+      y2:{
+        type:'linear',
+        position:'right',
+        min:0,
+        max:30,
+        grid:{drawOnChartArea:false},
+        ticks:{color:'#ff6b6b'},
+        title:{display:true,text:'Temp (°C)',color:'#ff6b6b'}
+      }
     },
-    plugins:{legend:{labels:{color:'#eaf6ff'}}}
+    plugins:{
+      legend:{
+        labels:{color:'#eaf6ff'}
+      }
+    }
   }
 });
+
 
 async function poll(){
   try{
@@ -205,14 +251,15 @@ function formatDateShort(date){
   let m=(date.getMonth()+1).toString().padStart(2,'0');
   let y=date.getFullYear().toString().slice(-2);
   let hh=date.getHours().toString().padStart(2,'0');
-  return `${d}/${m}/${y} ${hh}:00`;
+  let mm=date.getMinutes().toString().padStart(2,'0');
+  return `${d}/${m}/${y} ${hh}:${mm}`;
 }
 
 function applyFilter() {
   let startInput = document.getElementById('startDate').value;
   let endInput = document.getElementById('endDate').value;
 
-  let start = startInput ? new Date(startInput + "T01:00:00") : new Date(-8640000000000000);
+  let start = startInput ? new Date(startInput + "T00:00:00") : new Date(-8640000000000000);
   let end = endInput ? new Date(endInput + "T23:59:59") : new Date(8640000000000000);
 
   const filtered = allData.filter(d => d.ts >= start && d.ts <= end);
@@ -252,11 +299,10 @@ function applyFilter() {
   });
 }
 
-
 function downloadTable(){
   const rows=[];
   const table=document.getElementById("dataTable");
-  for(const tr of table.querySelectorAll("tr")){
+  for(const tr of table.querySelectorAdll("tr")){
     const cells=[...tr.querySelectorAll("th,td")].map(td=>`"${td.innerText}"`);
     rows.push(cells.join(","));
   }
@@ -270,8 +316,18 @@ function downloadTable(){
   URL.revokeObjectURL(url);
 }
 
-poll();
-setInterval(poll,10000);
+// === Set default date range: last 7 days ===
+window.addEventListener("load", () => {
+  const today = new Date();
+  const lastWeek = new Date();
+  lastWeek.setDate(today.getDate() - 7);
+
+  document.getElementById("startDate").value = lastWeek.toISOString().split("T")[0];
+  document.getElementById("endDate").value = today.toISOString().split("T")[0];
+
+  poll();
+  setInterval(poll,10000);
+});
 </script>
 </body>
 </html>
