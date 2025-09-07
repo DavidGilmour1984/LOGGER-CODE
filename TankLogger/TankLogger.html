@@ -215,6 +215,8 @@ async function poll(){
     const rows=(await res.text()).trim().split('\n').slice(1);
 
     let lastAcceptedVolume=null;
+    let lastValidTemp=null;   // 🔹 track last valid temp
+
     allData=rows.map(r=>{
       const[ts,depth,temp]=r.split(',');
       const depthM=(isNaN(+depth)?null:+depth);
@@ -228,11 +230,26 @@ async function poll(){
         volume=lastAcceptedVolume; // use filtered
       }
 
+      let tempVal, estimated=false;
+      if(isNaN(+temp)){
+        // 🔹 reuse last good temperature if available
+        if(lastValidTemp!==null){
+          tempVal=lastValidTemp;
+          estimated=true;
+        } else {
+          tempVal=null;
+        }
+      } else {
+        tempVal=+temp;
+        lastValidTemp=tempVal;
+      }
+
       return {
         ts:new Date(ts.replace(' ','T')),
         depth:depthM,
         volume:volume,
-        temp:(isNaN(+temp)?null:+temp)
+        temp:tempVal,
+        tempEstimated:estimated   // 🔹 flag for estimated temps
       };
     }).filter(d=>(d.volume!==null||d.temp!==null)&&d.ts.getFullYear()>=2020);
 
@@ -245,6 +262,7 @@ async function poll(){
     document.getElementById('connBadge').className="badge err";
   }
 }
+
 
 function formatDateShort(date){
   let d=date.getDate().toString().padStart(2,'0');
@@ -288,16 +306,24 @@ function applyFilter() {
         }
       }
     }
+
     tbody.insertAdjacentHTML('beforeend',
       `<tr>
          <td>${formatDateShort(d.ts)}</td>
-         <td>${d.temp !== null ? d.temp.toFixed(1) : ''}</td>
+         <td>${
+           d.temp !== null 
+             ? (d.tempEstimated 
+                 ? `<span style="color:lightblue">${d.temp.toFixed(1)}</span>` 
+                 : d.temp.toFixed(1)) 
+             : ''
+         }</td>
          <td>${d.volume !== null ? d.volume.toFixed(0) : ''}</td>
          <td>${netChange}</td>
          <td>${rain}</td>
        </tr>`);
   });
 }
+
 
 function downloadTable(){
   const rows=[];
