@@ -1,4 +1,4 @@
-/**** ESP32-CAM (AI-Thinker) – Triggered Photo Uploader with 30s Cooldown ****/
+/**** ESP32-CAM (AI-Thinker) – Triggered Photo Uploader with 30s Cooldown + WiFi Config AP ****/
 #include "esp_camera.h"
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
@@ -8,23 +8,25 @@
 #include "driver/gpio.h"
 #include "FS.h"
 #include "LittleFS.h"
+#include <Preferences.h>
+#include <WebServer.h>
+
+WebServer server(80);
+unsigned long accessPointStartTime = 0;
+Preferences preferences;
 
 // ==== USER SETTINGS ====
 String apiKey = "8841216e260eef9d5883dd8f6da93ffd";   // Neocities API key
-const char* REMOTE_DIR = "photos";                     // remote folder
-const char* JSON_PATH  = "/photos.json";               // local index (mirrored remotely)
+const char* remoteDirectory = "photos";               // remote folder
+const char* jsonPath  = "/photos.json";               // local index (mirrored remotely)
 const char* ntpServer  = "pool.ntp.org";
-const long  gmtOffset_sec = 12 * 3600;                 // NZST offset
-const int   daylightOffset_s = 0;
-
-// WiFi credentials (fixed as requested)
-const char* WIFI_SSID = "StPeters-PSK";
-const char* WIFI_PASS = "4OddDevices";
+const long  gmtOffsetSeconds = 12 * 3600;             // NZST offset
+const int   daylightOffsetSeconds = 0;
 
 // Pins
 #define FLASH_LED_PIN      4          // onboard flash LED (ESP32-CAM)
 #define TRIGGER_PIN        13         // D13 → wake/capture on HIGH
-#define COOLDOWN_US        (30ULL * 1000000ULL)  // 30 seconds
+#define COOLDOWN_MICROSECONDS        (30ULL * 1000000ULL)  // 30 seconds
 
 // ==== CAMERA PINOUT (AI-Thinker) ====
 #define PWDN_GPIO_NUM     32
@@ -45,7 +47,7 @@ const char* WIFI_PASS = "4OddDevices";
 #define PCLK_GPIO_NUM     22
 
 // ==== Helpers: Filesystem ====
-bool initFS() {
+bool initializeFileSystem() {
   if (!LittleFS.begin(true)) {
     Serial.println("LittleFS mount failed");
     return false;
@@ -53,63 +55,142 @@ bool initFS() {
   return true;
 }
 
-String loadJSON() {
-  if (!LittleFS.exists(JSON_PATH)) return "[]";
-  File f = LittleFS.open(JSON_PATH, "r");
-  if (!f) return "[]";
-  String content = f.readString();
-  f.close();
+String loadJsonFile() {
+  if (!LittleFS.exists(jsonPath)) return "[]";
+  File file = LittleFS.open(jsonPath, "r");
+  if (!file) return "[]";
+  String content = file.readString();
+  file.close();
   return (content.length() ? content : "[]");
 }
 
-void saveJSON(const String& json) {
-  File f = LittleFS.open(JSON_PATH, "w");
-  if (!f) return;
-  f.print(json);
-  f.close();
+void saveJsonFile(const String& json) {
+  File file = LittleFS.open(jsonPath, "w");
+  if (!file) return;
+  file.print(json);
+  file.close();
+}
+
+// ==== WiFi Config Portal Helpers ====
+bool loadWiFiCredentials(String &ssid, String &password) {
+  preferences.begin("wifi", true);
+  ssid = preferences.getString("ssid", "");
+  password = preferences.getString("pass", "");
+  preferences.end();
+  return (ssid.length() > 0);
+}
+
+void handleRootPage() {
+  String html = "<!DOCTYPE html><html><head><meta charset='UTF-8'>";
+  html += "<style>";
+  html += "body { font-family: Helvetica, Arial, sans-serif; background:#f5f7fb; color:#0f172a; text-align:center; padding:50px; }";
+  html += "h2 { font-size:40px; margin-bottom:30px; }";
+  html += "form { background:#ffffff; display:inline-block; padding:30px; border-radius:20px; box-shadow:0 10px 25px rgba(0,0,0,0.1); }";
+  html += "input { font-size:30px; margin:15px 0; padding:10px; border-radius:10px; border:1px solid #cbd5e1; width:80%; }";
+  html += "input[type=submit] { background:#2563eb; color:white; border:none; width:85%; cursor:pointer; transition:0.3s; }";
+  html += "input[type=submit]:hover { background:#1e40af; }";
+  html += "a { display:block; margin-top:25px; font-size:28px; color:#2563eb; text-decoration:none; }";
+  html += "a:hover { text-decoration:underline; }";
+  html += "</style></head><body>";
+  html += "<h2>WiFi Setup</h2>";
+  html += "<form action='/save' method='POST'>";
+  html += "<input type='text' name='ssid' placeholder='Enter WiFi SSID'><br>";
+  html += "<input type='password' name='pass' placeholder='Enter WiFi Password'><br>";
+  html += "<input type='submit' value='Save Credentials'>";
+  html += "</form>";
+  html += "<a href='/status'>View Saved Credentials</a>";
+  html += "</body></html>";
+  server.send(200, "text/html", html);
+}
+
+void handleSavePage() {
+  if (server.hasArg("ssid") && server.hasArg("pass")) {
+    String ssid = server.arg("ssid");
+    String password = server.arg("pass");
+    preferences.begin("wifi", false);
+    preferences.putString("ssid", ssid);
+    preferences.putString("pass", password);
+    preferences.end();
+    server.send(200, "text/html", "<html><body style='font-family:Helvetica; font-size:30px;'>Saved! Rebooting...</body></html>");
+    delay(1000);
+    ESP.restart();
+  } else {
+    server.send(400, "text/plain", "Missing SSID or password");
+  }
+}
+
+void handleStatusPage() {
+  String ssid, password;
+  loadWiFiCredentials(ssid, password);
+  String html = "<html><head><style>";
+  html += "body { font-family: Helvetica; font-size:30px; background:#f5f7fb; text-align:center; padding:50px; }";
+  html += "div { background:#ffffff; display:inline-block; padding:30px; border-radius:20px; box-shadow:0 10px 25px rgba(0,0,0,0.1); }";
+  html += "a { display:block; margin-top:25px; font-size:28px; color:#2563eb; text-decoration:none; }";
+  html += "</style></head><body><div>";
+  html += "<h2>Saved WiFi Credentials</h2>";
+  if (ssid.length() > 0) {
+    html += "SSID: " + ssid + "<br>";
+    html += "Password: " + password + "<br>";
+  } else {
+    html += "No credentials saved.<br>";
+  }
+  html += "<a href='/'>Back</a></div></body></html>";
+  server.send(200, "text/html", html);
+}
+
+void startAccessPointForConfiguration() {
+  WiFi.mode(WIFI_AP);
+  WiFi.softAP("ESP32 Access Point");
+  Serial.println("Started AP: ESP32 Access Point");
+
+  server.on("/", handleRootPage);
+  server.on("/save", HTTP_POST, handleSavePage);
+  server.on("/status", handleStatusPage);
+  server.begin();
+  accessPointStartTime = millis();
 }
 
 // ==== Helpers: Camera / Upload ====
-String filenameTimestamp() {
-  struct tm ti;
-  if (getLocalTime(&ti)) {
-    char buf[32];
-    strftime(buf, sizeof(buf), "%Y%m%d_%H%M%S", &ti);
-    return String(buf);
+String generateFilenameTimestamp() {
+  struct tm timeinfo;
+  if (getLocalTime(&timeinfo)) {
+    char buffer[32];
+    strftime(buffer, sizeof(buffer), "%Y%m%d_%H%M%S", &timeinfo);
+    return String(buffer);
   }
   return String(millis());
 }
 
-bool uploadMultipart(const String& remotePath, const uint8_t* data, size_t len, const char* mime) {
+bool uploadMultipartFile(const String& remotePath, const uint8_t* data, size_t length, const char* mimeType) {
   String boundary = "----ESP32Boundary" + String((uint32_t)millis());
   String head =
     "--" + boundary + "\r\n"
     "Content-Disposition: form-data; name=\"" + remotePath + "\"; filename=\"" +
     remotePath.substring(remotePath.lastIndexOf('/')+1) + "\"\r\n"
-    "Content-Type: " + String(mime) + "\r\n\r\n";
+    "Content-Type: " + String(mimeType) + "\r\n\r\n";
   String tail = "\r\n--" + boundary + "--\r\n";
 
-  size_t total = head.length() + len + tail.length();
-  uint8_t* body = (uint8_t*)malloc(total);
+  size_t totalLength = head.length() + length + tail.length();
+  uint8_t* body = (uint8_t*)malloc(totalLength);
   if (!body) return false;
   memcpy(body, head.c_str(), head.length());
-  memcpy(body + head.length(), data, len);
-  memcpy(body + head.length() + len, tail.c_str(), tail.length());
+  memcpy(body + head.length(), data, length);
+  memcpy(body + head.length() + length, tail.c_str(), tail.length());
 
   WiFiClientSecure client;
-  client.setInsecure();  // Neocities uses valid certs; skipping validation for simplicity
+  client.setInsecure();
   HTTPClient http;
   if (!http.begin(client, "https://neocities.org/api/upload")) { free(body); return false; }
   http.addHeader("Authorization", String("Bearer ") + apiKey);
   http.addHeader("Content-Type", "multipart/form-data; boundary=" + boundary);
-  int code = http.POST(body, total);
+  int code = http.POST(body, totalLength);
   free(body);
   http.end();
   Serial.printf("Upload %s → HTTP %d\n", remotePath.c_str(), code);
   return (code >= 200 && code < 300);
 }
 
-bool initCamera() {
+bool initializeCamera() {
   camera_config_t config;
   config.ledc_channel = LEDC_CHANNEL_0;
   config.ledc_timer   = LEDC_TIMER_0;
@@ -131,40 +212,10 @@ bool initCamera() {
   config.pin_reset    = RESET_GPIO_NUM;
   config.xclk_freq_hz = 20000000;
   config.pixel_format = PIXFORMAT_JPEG;
-  config.frame_size   = FRAMESIZE_SVGA;  // 800x600-ish; adjust if needed
-  config.jpeg_quality = 12;              // lower = better quality
+  config.frame_size   = FRAMESIZE_SVGA;
+  config.jpeg_quality = 12;
   config.fb_count     = 1;
   return (esp_camera_init(&config) == ESP_OK);
-}
-
-bool captureAndUpload() {
-  digitalWrite(FLASH_LED_PIN, LOW);  // ensure known state
-  digitalWrite(FLASH_LED_PIN, HIGH); // quick flash for exposure
-  delay(100);
-  camera_fb_t* fb = esp_camera_fb_get();
-  digitalWrite(FLASH_LED_PIN, LOW);
-  if (!fb) {
-    Serial.println("Camera capture failed");
-    return false;
-  }
-
-  String name = filenameTimestamp() + ".jpg";
-  String remotePath = String(REMOTE_DIR) + "/" + name;
-
-  bool ok = uploadMultipart(remotePath, fb->buf, fb->len, "image/jpeg");
-  esp_camera_fb_return(fb);
-  if (!ok) return false;
-
-  // Update local JSON index and mirror it remotely
-  String json = loadJSON();
-  if (json == "[]") json = "[\"" + name + "\"]";
-  else              json = json.substring(0, json.length()-1) + ",\"" + name + "\"]";
-  saveJSON(json);
-
-  uploadMultipart(String(REMOTE_DIR) + "/photos.json",
-                  (uint8_t*)json.c_str(), json.length(),
-                  "application/json");
-  return true;
 }
 
 // ==== Helpers: Deep Sleep / Wake ====
@@ -180,11 +231,9 @@ void releaseFlashHoldAfterWake() {
 }
 
 void armTriggerAndSleep() {
-  // Make sure the trigger is not currently held HIGH before arming
   while (digitalRead(TRIGGER_PIN) == HIGH) {
     delay(10);
   }
-  // EXT0 wake on HIGH for RTC-capable GPIO13
   esp_sleep_enable_ext0_wakeup(GPIO_NUM_13, 1);
   holdFlashLowAndEnableDeepSleepHold();
   Serial.println("Armed: waiting for D13 HIGH → deep sleep...");
@@ -192,17 +241,17 @@ void armTriggerAndSleep() {
 }
 
 void sleepCooldown30sOnlyTimer() {
-  esp_sleep_enable_timer_wakeup(COOLDOWN_US);
+  esp_sleep_enable_timer_wakeup(COOLDOWN_MICROSECONDS);
   holdFlashLowAndEnableDeepSleepHold();
   Serial.println("Cooldown: 30s timer → deep sleep...");
   esp_deep_sleep_start();
 }
 
 // ==== WiFi ====
-bool connectWiFi() {
+bool connectWiFi(const String &ssid, const String &password) {
   WiFi.mode(WIFI_STA);
-  WiFi.begin(WIFI_SSID, WIFI_PASS);
-  Serial.printf("Connecting to %s", WIFI_SSID);
+  WiFi.begin(ssid.c_str(), password.c_str());
+  Serial.printf("Connecting to %s", ssid.c_str());
   unsigned long start = millis();
   while (WiFi.status() != WL_CONNECTED && (millis() - start) < 15000) {
     delay(500);
@@ -218,55 +267,99 @@ bool connectWiFi() {
   return false;
 }
 
-// ==== Arduino setup/loop ====
+// ==== Arduino setup ====
 void setup() {
-  Serial.begin(9600);      // per your default
+  Serial.begin(9600);
   delay(50);
 
   pinMode(FLASH_LED_PIN, OUTPUT);
   digitalWrite(FLASH_LED_PIN, LOW);
-
-  // Use internal pulldown on trigger pin
   pinMode(TRIGGER_PIN, INPUT_PULLDOWN);
 
   releaseFlashHoldAfterWake();
-  initFS();
+  initializeFileSystem();
+
+  // Always start AP for 1 minute on boot/reset
+  startAccessPointForConfiguration();
 
   esp_sleep_wakeup_cause_t cause = esp_sleep_get_wakeup_cause();
   Serial.printf("Wake cause: %d\n", (int)cause);
 
+  // If woken by trigger, capture immediately (minimal delay)
   if (cause == ESP_SLEEP_WAKEUP_EXT0) {
-    // Triggered by D13 going HIGH → take & upload photo, then cooldown
-    if (!connectWiFi()) {
-      // If WiFi failed, skip capture to save power and retry next trigger
-      sleepCooldown30sOnlyTimer();
-    }
-
-    configTime(gmtOffset_sec, daylightOffset_s, ntpServer);
-    if (!initCamera()) {
+    if (!initializeCamera()) {
       Serial.println("Camera init failed");
       sleepCooldown30sOnlyTimer();
     }
 
-    bool ok = captureAndUpload();
-    if (!ok) Serial.println("Capture/upload failed");
+    // Capture immediately
+    digitalWrite(FLASH_LED_PIN, HIGH);
+    delay(100);
+    camera_fb_t* frameBuffer = esp_camera_fb_get();
+    digitalWrite(FLASH_LED_PIN, LOW);
+
+    if (!frameBuffer) {
+      Serial.println("Camera capture failed");
+      sleepCooldown30sOnlyTimer();
+    }
+
+    // Connect WiFi after capture
+    String ssid, password;
+    if (!loadWiFiCredentials(ssid, password) || !connectWiFi(ssid, password)) {
+      esp_camera_fb_return(frameBuffer);
+      sleepCooldown30sOnlyTimer();
+    }
+
+    configTime(gmtOffsetSeconds, daylightOffsetSeconds, ntpServer);
+
+    // Upload captured frame
+    String filename = generateFilenameTimestamp() + ".jpg";
+    String remotePath = String(remoteDirectory) + "/" + filename;
+    bool ok = uploadMultipartFile(remotePath, frameBuffer->buf, frameBuffer->len, "image/jpeg");
+
+    esp_camera_fb_return(frameBuffer);
     esp_camera_deinit();
 
-    // Enforce 30s minimum between shots
+    if (ok) {
+      String json = loadJsonFile();
+      if (json == "[]") json = "[\"" + filename + "\"]";
+      else json = json.substring(0, json.length()-1) + ",\"" + filename + "\"]";
+      saveJsonFile(json);
+
+      uploadMultipartFile(String(remoteDirectory) + "/photos.json",
+                          (uint8_t*)json.c_str(), json.length(),
+                          "application/json");
+    } else {
+      Serial.println("Upload failed");
+    }
+
     sleepCooldown30sOnlyTimer();
   }
   else if (cause == ESP_SLEEP_WAKEUP_TIMER) {
-    // Cooldown finished → re-arm the trigger and go back to deep sleep
     armTriggerAndSleep();
   }
   else {
-    // Cold boot or other cause → connect WiFi (optional for time sync), arm & sleep
-    connectWiFi(); // not strictly required, but helps time sync on first run
-    configTime(gmtOffset_sec, daylightOffset_s, ntpServer);
-    armTriggerAndSleep();
+    // Cold boot: keep AP running until timeout
+    Serial.println("Cold boot: staying awake for AP window");
   }
 }
 
+// ==== Arduino loop ====
 void loop() {
-  // Not used — device spends nearly all time in deep sleep
+  if (WiFi.getMode() == WIFI_AP) {
+    server.handleClient();
+    if (millis() - accessPointStartTime > 60000) {
+      Serial.println("AP window expired, continuing with normal workflow...");
+
+      // Load WiFi credentials
+      String ssid, password;
+      if (!loadWiFiCredentials(ssid, password)) {
+        Serial.println("No WiFi credentials saved, restarting...");
+        ESP.restart();
+      }
+
+      // After AP window: enter normal workflow
+      armTriggerAndSleep();
+    }
+  }
 }
