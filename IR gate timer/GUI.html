@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Gate Timer</title>
+
+<style>
+body {
+  font-family: Helvetica, sans-serif;
+  display: flex;
+  margin: 0;
+  height: 100vh;
+  background: #f4f4f4;
+}
+
+.sidebar {
+  width: 25%;
+  background: #333;
+  color: white;
+  padding: 20px;
+}
+
+.sidebar button, .sidebar input {
+  width: 100%;
+  font-size: 18px;
+  padding: 10px;
+  margin-bottom: 10px;
+  background: #444;
+  color: white;
+  border: none;
+}
+
+.sidebar button:hover { background: #555; }
+.sidebar input { background: #555; text-align: center; }
+
+.main {
+  width: 75%;
+  padding: 20px;
+}
+
+.timer {
+  border: 2px solid black;
+  width: 260px;
+  height: 60px;
+  font-size: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 20px;
+  background: white;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+th, td {
+  border: 1px solid black;
+  padding: 8px;
+  text-align: center;
+}
+
+th { background: #ddd; }
+
+.delete-btn {
+  background: red;
+  color: white;
+  border: none;
+  padding: 6px 10px;
+  cursor: pointer;
+}
+</style>
+</head>
+
+<body>
+
+<div class="sidebar">
+  <h2>Gate Timer</h2>
+  <button onclick="connect()">Connect ESP32</button>
+  <button onclick="resetTimer()">Reset Timer</button>
+  <input id="csvName" placeholder="CSV filename">
+  <button onclick="exportCSV()">Export CSV</button>
+</div>
+
+<div class="main">
+  <div class="timer" id="timer">0.00 s</div>
+
+  <table id="results">
+    <thead>
+      <tr>
+        <th>Trial</th>
+        <th>Time (s)</th>
+        <th>Delete</th>
+      </tr>
+    </thead>
+    <tbody></tbody>
+  </table>
+</div>
+
+<script>
+let port, reader;
+let buffer = "";
+
+let startBrowserMs = null;
+let liveInterval = null;
+let trial = 0;
+
+async function connect() {
+  port = await navigator.serial.requestPort();
+  await port.open({ baudRate: 115200 });
+  reader = port.readable.getReader();
+  readLoop();
+}
+
+async function readLoop() {
+  const decoder = new TextDecoder();
+
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value);
+    let lines = buffer.split("\n");
+    buffer = lines.pop();
+
+    for (let line of lines) {
+      line = line.trim();
+
+      if (line === "READY") {
+        resetTimer();
+      }
+
+      if (line.startsWith("TIME")) {
+        stopLiveTimer(line);
+      }
+    }
+  }
+}
+
+function startLiveTimer() {
+  clearInterval(liveInterval);
+  startBrowserMs = performance.now();
+  liveInterval = setInterval(() => {
+    const t = ((performance.now() - startBrowserMs) / 1000).toFixed(2);
+    document.getElementById("timer").textContent = `${t} s`;
+  }, 50);
+}
+
+function stopLiveTimer(line) {
+  clearInterval(liveInterval);
+
+  const us = parseInt(line.split(",")[1]);
+  const seconds = (us / 1e6).toFixed(2);
+  document.getElementById("timer").textContent = `${seconds} s`;
+
+  saveTrial(seconds);
+  startBrowserMs = null;
+}
+
+function resetTimer() {
+  clearInterval(liveInterval);
+  document.getElementById("timer").textContent = "0.00 s";
+  startBrowserMs = null;
+}
+
+function saveTrial(sec) {
+  trial++;
+  const tbody = document.querySelector("#results tbody");
+  const row = tbody.insertRow();
+
+  row.insertCell(0).textContent = trial;
+  row.insertCell(1).textContent = sec;
+
+  const del = row.insertCell(2);
+  const btn = document.createElement("button");
+  btn.textContent = "X";
+  btn.className = "delete-btn";
+  btn.onclick = () => row.remove();
+  del.appendChild(btn);
+}
+
+function exportCSV() {
+  const name = document.getElementById("csvName").value || "gate_times";
+  let csv = "Trial,Time (s)\n";
+
+  document.querySelectorAll("#results tbody tr").forEach(r => {
+    csv += r.cells[0].textContent + "," + r.cells[1].textContent + "\n";
+  });
+
+  const blob = new Blob([csv], { type: "text/csv" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = name + ".csv";
+  a.click();
+  URL.revokeObjectURL(url);
+}
+</script>
+
+</body>
+</html>
