@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>CSV Map Visualiser</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+
+<style>
+body {
+  margin: 0;
+  font-family: Helvetica, Arial, sans-serif;
+}
+#map {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100vh;
+  width: 100vw;
+}
+#ui {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  background: white;
+  padding: 12px;
+  border-radius: 8px;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.2);
+  z-index: 1000;
+  max-height: 90vh;
+  overflow-y: auto;
+  width: 260px;
+}
+label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 14px;
+}
+</style>
+</head>
+
+<body>
+
+<div id="ui">
+  <strong>CSV Map Visualiser</strong><br><br>
+  <input type="file" id="csvFile"><br><br>
+  <div id="variables"></div>
+</div>
+
+<div id="map"></div>
+
+<script>
+let map = L.map('map');
+let markersLayer = L.layerGroup().addTo(map);
+let data = [];
+let activeVariable = null;
+
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  attribution: '© OpenStreetMap contributors'
+}).addTo(map);
+
+// ---------- CSV LOAD ----------
+document.getElementById("csvFile").addEventListener("change", e => {
+  Papa.parse(e.target.files[0], {
+    header: true,
+    dynamicTyping: true,
+    skipEmptyLines: true,
+    transformHeader: h => h.trim(),
+    complete: res => {
+
+      data = res.data.filter(r =>
+        typeof r.lat === "number" &&
+        typeof r.lon === "number"
+      );
+
+      if (data.length === 0) {
+        alert("No valid lat / lon columns found.");
+        return;
+      }
+
+      buildVariableList();
+      zoomToCSV();          // ✅ CRITICAL
+    }
+  });
+});
+
+// ---------- UI ----------
+function buildVariableList() {
+  const container = document.getElementById("variables");
+  container.innerHTML = "<strong>Colour by variable:</strong><br>";
+
+  const ignore = ["lat", "lon"];
+
+  Object.keys(data[0]).forEach(key => {
+    if (ignore.includes(key)) return;
+    if (typeof data[0][key] !== "number") return;
+
+    const label = document.createElement("label");
+    label.innerHTML = `
+      <input type="radio" name="variable" value="${key}">
+      ${key}
+    `;
+
+    label.querySelector("input").addEventListener("change", () => {
+      activeVariable = key;
+      plotMarkers();
+    });
+
+    container.appendChild(label);
+  });
+}
+
+// ---------- MAP ----------
+function zoomToCSV() {
+  const bounds = L.latLngBounds(data.map(d => [d.lat, d.lon]));
+  map.fitBounds(bounds, { padding: [40, 40] });
+  map.invalidateSize();   // 🔒 forces redraw
+}
+
+function plotMarkers() {
+  markersLayer.clearLayers();
+  if (!activeVariable) return;
+
+  const values = data.map(d => d[activeVariable]);
+  const minV = Math.min(...values);
+  const maxV = Math.max(...values);
+
+  data.forEach(d => {
+    const t = (d[activeVariable] - minV) / (maxV - minV || 1);
+    const color = getColor(t);
+
+    const marker = L.circleMarker(
+      [d.lat, d.lon],
+      {
+        radius: 6,
+        color,
+        fillColor: color,
+        fillOpacity: 0.9
+      }
+    ).bindPopup(`
+      <strong>${activeVariable}</strong>: ${d[activeVariable]}<br><br>
+      <b>Time:</b> ${d.time_s} s<br>
+      <b>CO₂:</b> ${d.co2_ppm} ppm<br>
+      <b>SCD Temp:</b> ${d.scd_temp} °C<br>
+      <b>Humidity:</b> ${d.humidity_pct} %<br>
+      <b>Pressure:</b> ${d.pressure_Pa} Pa<br>
+      <b>BMP Temp:</b> ${d.bmp_temp_C} °C<br>
+      <b>Altitude:</b> ${d.alt_m} m<br>
+      <b>Sats:</b> ${d.sats}
+    `);
+
+    markersLayer.addLayer(marker);
+  });
+
+  map.fitBounds(markersLayer.getBounds(), { padding: [40, 40] });
+}
+
+// ---------- COLOUR ----------
+function getColor(t) {
+  const hue = 240 - 240 * t;
+  return `hsl(${hue}, 100%, 45%)`;
+}
+</script>
+
+</body>
+</html>
