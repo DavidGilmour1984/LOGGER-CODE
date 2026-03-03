@@ -1,0 +1,69 @@
+#include <HardwareSerial.h>
+
+HardwareSerial ZPH(2);
+
+#define RX_PIN 26
+#define TX_PIN 27
+
+uint8_t frame[9];
+
+void setup()
+{
+  Serial.begin(9600);
+  ZPH.begin(9600, SERIAL_8N1, RX_PIN, TX_PIN);
+
+  Serial.println("ZPH02 full frame reader");
+}
+
+void loop()
+{
+  if (ZPH.available())
+  {
+    if (ZPH.read() == 0xFF)
+    {
+      frame[0] = 0xFF;
+
+      for (int i = 1; i < 9; i++)
+      {
+        while (!ZPH.available());
+        frame[i] = ZPH.read();
+      }
+
+      Serial.println("------ FRAME ------");
+
+      Serial.print("Start byte: ");
+      Serial.println(frame[0], HEX);
+
+      Serial.print("Detection type: ");
+      Serial.println(frame[1], HEX);
+
+      Serial.print("Unit byte: ");
+      Serial.println(frame[2], HEX);
+
+      Serial.print("Low pulse integer: ");
+      Serial.println(frame[3]);
+
+      Serial.print("Low pulse decimal: ");
+      Serial.println(frame[4]);
+
+      float lowPulseRate = frame[3] + frame[4] / 100.0;
+
+      Serial.print("PM2.5 low pulse rate (%): ");
+      Serial.println(lowPulseRate);
+
+      Serial.print("Reserved: ");
+      Serial.println(frame[5]);
+
+      Serial.print("Mode: ");
+      Serial.println(frame[6]);
+
+      Serial.print("VOC grade: ");
+      Serial.println(frame[7]);
+
+      Serial.print("Checksum: 0x");
+      Serial.println(frame[8], HEX);
+
+      Serial.println();
+    }
+  }
+}
