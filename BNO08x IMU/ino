@@ -1,0 +1,140 @@
+#include <Wire.h>
+#include <Adafruit_BNO08x.h>
+
+#define SDA_PIN 21
+#define SCL_PIN 22
+
+#define TRIGGER_PIN 18
+
+Adafruit_BNO08x bno08x;
+sh2_SensorValue_t sensorValue;
+
+/* ---------- STATE ---------- */
+
+bool capturing = false;
+bool armed = true;
+
+unsigned long startTime = 0;
+unsigned long lastSample = 0;
+
+float ax_offset = 0;
+float ay_offset = 0;
+float az_offset = 0;
+
+float vx = 0;
+float vy = 0;
+float vz = 0;
+
+float px = 0;
+float py = 0;
+float pz = 0;
+
+/* ---------- SETUP ---------- */
+
+void setup()
+{
+  Serial.begin(9600);
+  delay(1000);
+
+  pinMode(TRIGGER_PIN, INPUT_PULLUP);
+
+  Wire.begin(SDA_PIN, SCL_PIN);
+  Wire.setClock(400000);
+
+  if (!bno08x.begin_I2C(0x4B, &Wire))
+  {
+    Serial.println("BNO08x not detected");
+    while (1);
+  }
+
+  delay(100);
+
+  bno08x.enableReport(SH2_ACCELEROMETER, 10000); // 100 Hz
+
+  Serial.println("Ready");
+}
+
+/* ---------- LOOP ---------- */
+
+void loop()
+{
+  /* ---------- WAITING / ZEROING ---------- */
+
+  if (!capturing)
+  {
+    if (digitalRead(TRIGGER_PIN) == LOW && armed)
+    {
+      capturing = true;
+      armed = false;
+
+      vx = vy = vz = 0;
+      px = py = pz = 0;
+
+      startTime = millis();
+      lastSample = micros();
+
+      Serial.println("time,x,y,z");
+      return;
+    }
+
+    // Re-arm when pin goes HIGH again
+    if (digitalRead(TRIGGER_PIN) == HIGH)
+    {
+      armed = true;
+    }
+
+    // Continuously update zero offset
+    if (bno08x.getSensorEvent(&sensorValue))
+    {
+      if (sensorValue.sensorId == SH2_ACCELEROMETER)
+      {
+        ax_offset = sensorValue.un.accelerometer.x;
+        ay_offset = sensorValue.un.accelerometer.y;
+        az_offset = sensorValue.un.accelerometer.z;
+      }
+    }
+
+    return;
+  }
+
+  /* ---------- CAPTURE MODE ---------- */
+
+  if (millis() - startTime >= 1000)
+  {
+    capturing = false;
+    return;
+  }
+
+  if (micros() - lastSample < 10000) return; // 100 Hz
+  lastSample = micros();
+
+  if (bno08x.getSensorEvent(&sensorValue))
+  {
+    if (sensorValue.sensorId == SH2_ACCELEROMETER)
+    {
+      float ax = sensorValue.un.accelerometer.x - ax_offset;
+      float ay = sensorValue.un.accelerometer.y - ay_offset;
+      float az = sensorValue.un.accelerometer.z - az_offset;
+
+      float dt = 0.01; // 100 Hz
+
+      // Integrate acceleration → velocity
+      vx += ax * dt;
+      vy += ay * dt;
+      vz += az * dt;
+
+      // Integrate velocity → position
+      px += vx * dt;
+      py += vy * dt;
+      pz += vz * dt;
+
+      // Time in seconds
+      float t = (millis() - startTime) / 1000.0;
+
+      Serial.print(t, 3); Serial.print(",");
+      Serial.print(px, 4); Serial.print(",");
+      Serial.print(py, 4); Serial.print(",");
+      Serial.println(pz, 4);
+    }
+  }
+}
