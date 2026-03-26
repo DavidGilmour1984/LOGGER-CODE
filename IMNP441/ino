@@ -1,0 +1,79 @@
+#include <driver/i2s.h>
+#include <math.h>
+
+#define I2S_WS   19
+#define I2S_SCK  18
+#define I2S_SD   23
+#define I2S_PORT I2S_NUM_0
+
+#define SAMPLE_RATE        44100
+#define SAMPLES_PER_WINDOW 1024
+#define REF_AMPLITUDE      8388608.0f
+#define SPL_OFFSET         120.0f
+
+// High-pass filter coefficient — closer to 1.0 = higher cutoff
+// 0.98 ≈ ~350 Hz cutoff, removes DC and low rumble
+#define HPF_ALPHA 0.98f
+
+void setup() {
+  Serial.begin(9600);
+
+  i2s_config_t i2s_config = {
+    .mode                 = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_RX),
+    .sample_rate          = SAMPLE_RATE,
+    .bits_per_sample      = I2S_BITS_PER_SAMPLE_32BIT,
+    .channel_format       = I2S_CHANNEL_FMT_ONLY_RIGHT,
+    .communication_format = I2S_COMM_FORMAT_STAND_I2S,
+    .intr_alloc_flags     = ESP_INTR_FLAG_LEVEL1,
+    .dma_buf_count        = 8,
+    .dma_buf_len          = 256,
+    .use_apll             = false,
+    .tx_desc_auto_clear   = false,
+    .fixed_mclk           = 0
+  };
+
+  i2s_pin_config_t pin_config = {
+    .bck_io_num   = I2S_SCK,
+    .ws_io_num    = I2S_WS,
+    .data_out_num = I2S_PIN_NO_CHANGE,
+    .data_in_num  = I2S_SD
+  };
+
+  ESP_ERROR_CHECK(i2s_driver_install(I2S_PORT, &i2s_config, 0, NULL));
+  ESP_ERROR_CHECK(i2s_set_pin(I2S_PORT, &pin_config));
+  ESP_ERROR_CHECK(i2s_zero_dma_buffer(I2S_PORT));
+}
+
+void loop() {
+  static int32_t buf[256];
+  static float hpf_prev_in  = 0.0f;
+  static float hpf_prev_out = 0.0f;
+  double sumSquares = 0.0;
+  int32_t totalSamples = 0;
+
+  while (totalSamples < SAMPLES_PER_WINDOW) {
+    size_t bytesRead = 0;
+    int32_t chunkSamples = min((int32_t)256, SAMPLES_PER_WINDOW - totalSamples);
+
+    i2s_read(I2S_PORT, (void*)buf,
+             chunkSamples * sizeof(int32_t),
+             &bytesRead, portMAX_DELAY);
+
+    int32_t samplesRead = bytesRead / sizeof(int32_t);
+    for (int i = 0; i < samplesRead; i++) {
+      float raw = (float)(buf[i] >> 8);
+
+      // First-order high-pass filter: y[n] = α*(y[n-1] + x[n] - x[n-1])
+      float filtered = HPF_ALPHA * (hpf_prev_out + raw - hpf_prev_in);
+      hpf_prev_in  = raw;
+      hpf_prev_out = filtered;
+
+      sumSquares += (double)(filtered * filtered);
+    }
+    totalSamples += samplesRead;
+  }
+
+  double rms   = sqrt(sumSquares / totalSamples);
+  float  dBFS  = (rms > 0.0) ? 20.0f * log10f((float)(rms / REF_AMPLITUDE)) : -120.0f;
+  Serial.println(dBFS + SPL_OFFSET, 1);
+}
